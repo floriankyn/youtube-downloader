@@ -1,32 +1,16 @@
 import { type NextRequest } from "next/server";
-import { spawn, execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-const execFileAsync = promisify(execFile);
+import { spawn } from "node:child_process";
+import {
+  execFileAsync,
+  getYtDlpPath,
+  getFfmpegPath,
+  isValidYouTubeUrl,
+} from "@/app/lib/ytdlp";
 
 const VALID_FORMATS = ["mp3", "mp4", "wav"] as const;
 type Format = (typeof VALID_FORMATS)[number];
 
 export const maxDuration = 60;
-
-function getYtDlpPath(): string {
-  const bundled = join(process.cwd(), "bin", "yt-dlp_linux");
-  if (process.platform === "linux" && existsSync(bundled)) {
-    return bundled;
-  }
-  return "yt-dlp";
-}
-
-function getFfmpegPath(): string {
-  // On Vercel (Linux), use ffmpeg-static from node_modules resolved at runtime
-  const bundled = join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg");
-  if (existsSync(bundled)) {
-    return bundled;
-  }
-  // Fallback to system ffmpeg
-  return "ffmpeg";
-}
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get("url");
@@ -40,11 +24,7 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: "Invalid format" }, { status: 400 });
   }
 
-  if (
-    !url.match(
-      /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)/
-    )
-  ) {
+  if (!isValidYouTubeUrl(url)) {
     return Response.json({ error: "Invalid YouTube URL" }, { status: 400 });
   }
 
@@ -132,7 +112,6 @@ function streamAudio(
 ) {
   const stream = new ReadableStream({
     start(controller) {
-      // yt-dlp downloads audio and pipes raw stream to ffmpeg for conversion
       const ytProc = spawn(ytdlp, [
         "--no-playlist",
         "--no-warnings",
