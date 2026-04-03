@@ -282,6 +282,157 @@ function AutoTextarea({
   );
 }
 
+// ─── Beat Player ─────────────────────────────────────────────
+
+function BeatPlayer({ url, title }: { url: string; title: string }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready">("idle");
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [downloading, setDownloading] = useState(false);
+
+  // Lazy-load: only fetch when user first presses play
+  async function load() {
+    setStatus("loading");
+    try {
+      const res = await fetch(`/api/preview?${new URLSearchParams({ url })}`);
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const obj = URL.createObjectURL(blob);
+      setBlobUrl(obj);
+      setStatus("ready");
+      return obj;
+    } catch {
+      setStatus("idle");
+    }
+  }
+
+  async function togglePlay() {
+    let src = blobUrl;
+    if (status === "idle") src = await load() ?? null;
+    if (!src) return;
+
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.src !== src) audio.src = src;
+
+    playing ? audio.pause() : audio.play();
+  }
+
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/download?${new URLSearchParams({ url, format: "wav" })}`);
+      if (!res.ok) throw new Error();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="(.+)"/);
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = match ? match[1] : `${title}.wav`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      // silent
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  function handleSeek(e: React.ChangeEvent<HTMLInputElement>) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const t = Number(e.target.value);
+    audio.currentTime = t;
+    setCurrentTime(t);
+  }
+
+  // Cleanup blob URL on unmount
+  useEffect(() => {
+    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [blobUrl]);
+
+  return (
+    <div className="flex items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+      {/* Play/pause */}
+      <button
+        onClick={togglePlay}
+        disabled={status === "loading"}
+        className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-zinc-900 text-white hover:bg-zinc-700 disabled:opacity-50 transition-colors dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+      >
+        {status === "loading" ? (
+          <span className="w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin dark:border-zinc-900/30 dark:border-t-zinc-900" />
+        ) : playing ? (
+          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 translate-x-px" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        )}
+      </button>
+
+      {/* Time */}
+      <span className="flex-shrink-0 text-[10px] tabular-nums text-zinc-400 w-8 text-right">
+        {formatDuration(currentTime)}
+      </span>
+
+      {/* Seek bar */}
+      <div className="flex-1 relative flex items-center">
+        <input
+          type="range"
+          min={0}
+          max={duration || 100}
+          step={0.1}
+          value={currentTime}
+          onChange={handleSeek}
+          disabled={status !== "ready"}
+          className="w-full h-1 appearance-none rounded-full cursor-pointer disabled:cursor-default accent-red-500"
+          style={{
+            background: duration
+              ? `linear-gradient(to right, rgb(239 68 68) ${(currentTime / duration) * 100}%, rgb(228 228 231) ${(currentTime / duration) * 100}%)`
+              : "rgb(228 228 231)",
+          }}
+        />
+      </div>
+
+      {/* Total duration */}
+      <span className="flex-shrink-0 text-[10px] tabular-nums text-zinc-400 w-8">
+        {duration ? formatDuration(duration) : "--:--"}
+      </span>
+
+      {/* Download */}
+      <button
+        onClick={handleDownload}
+        disabled={downloading}
+        title="Download as WAV"
+        className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 disabled:opacity-40 transition-colors"
+      >
+        {downloading ? (
+          <span className="w-3 h-3 rounded-full border-2 border-zinc-300 border-t-zinc-600 animate-spin" />
+        ) : (
+          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M12 3v13M7 11l5 5 5-5" /><path d="M5 21h14" />
+          </svg>
+        )}
+      </button>
+
+      {/* Hidden audio element */}
+      <audio
+        ref={audioRef}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setCurrentTime(0); }}
+        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+      />
+    </div>
+  );
+}
+
 // ─── Beat Badges ─────────────────────────────────────────────
 
 function BeatBadges({ fav }: { fav: Favorite }) {
@@ -456,27 +607,32 @@ export default function NotesPage() {
     <div className="min-h-screen bg-white dark:bg-zinc-950">
       {/* ── Sticky song header ── */}
       <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
-        <div className="mx-auto max-w-2xl px-4 py-3 flex items-center gap-3">
-          <button
-            onClick={() => router.push("/?tab=favorites")}
-            className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2}>
-              <path d="M19 12H5M12 5l-7 7 7 7" />
-            </svg>
-          </button>
-          <img src={favorite.thumbnail} alt="" className="flex-shrink-0 h-12 w-20 rounded-md object-cover" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold leading-tight truncate">{favorite.title}</p>
-            <BeatBadges fav={favorite} />
+        <div className="mx-auto max-w-2xl px-4 pt-3 pb-2 space-y-2">
+          {/* Row 1: back / thumbnail / title / save status */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.push("/?tab=favorites")}
+              className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M19 12H5M12 5l-7 7 7 7" />
+              </svg>
+            </button>
+            <img src={favorite.thumbnail} alt="" className="flex-shrink-0 h-12 w-20 rounded-md object-cover" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold leading-tight truncate">{favorite.title}</p>
+              <BeatBadges fav={favorite} />
+            </div>
+            <span className={`flex-shrink-0 text-[10px] transition-colors ${
+              saveStatus === "saving" ? "text-zinc-400" :
+              saveStatus === "unsaved" ? "text-amber-500" :
+              "text-zinc-300 dark:text-zinc-600"
+            }`}>
+              {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
+            </span>
           </div>
-          <span className={`flex-shrink-0 text-[10px] transition-colors ${
-            saveStatus === "saving" ? "text-zinc-400" :
-            saveStatus === "unsaved" ? "text-amber-500" :
-            "text-zinc-300 dark:text-zinc-600"
-          }`}>
-            {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
-          </span>
+          {/* Row 2: beat player */}
+          <BeatPlayer url={favorite.url} title={favorite.title} />
         </div>
       </div>
 
