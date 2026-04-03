@@ -18,13 +18,23 @@ model User {
 }
 
 model Note {
-  id        String   @id @default(cuid())
-  userId    String
-  videoId   String
-  blocks    Json     @default("[]")
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  userId         String
+  videoId        String
+  blocks         Json     @default("[]")
+  timecodes      Json     @default("[]")
+  songName       String?
+  isPublic       Boolean  @default(false)
+  publicId       String?  @unique
+  bpm            String?
+  key            String?
+  beatType       String?
+  videoTitle     String?
+  videoThumbnail String?
+  videoUrl       String?
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, videoId])
 }

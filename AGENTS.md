@@ -41,7 +41,7 @@ A music production web app. Users search YouTube for beats, preview and download
 
 ```
 app/
-  page.tsx              # Main page — three tabs: Paste URL, Search YouTube, Favorites
+  page.tsx              # Main page — four tabs: Paste URL, Search YouTube, Favorites, Songs
   layout.tsx            # App title "Music Craftbook", global metadata
   globals.css
   api/
@@ -50,13 +50,16 @@ app/
     analyze/route.ts    # Single-video metadata extraction
     download/route.ts   # Stream download (MP4 / MP3 / WAV)
     preview/route.ts    # Audio preview stream
-    favorites/route.ts  # GET / POST / DELETE favorites
-    notes/[videoId]/route.ts  # GET + PUT note blocks
+    favorites/route.ts  # GET / POST / PATCH / DELETE favorites
+    notes/[videoId]/route.ts  # GET + PUT note blocks (includes song metadata)
+    songs/route.ts      # GET notes with songName set (no proxy — uses getSession)
+    view/[publicId]/route.ts  # Public note view (no auth)
   notes/[videoId]/page.tsx    # Full lyrics/notes editor
+  view/[publicId]/page.tsx    # Read-only public share page
 proxy.ts                # Auth middleware — protects /api/search, /api/favorites, /api/notes
 prisma/
   schema.prisma         # User, Favorite, Note models
-  migrations/           # 4 migrations (init → favorites → filters → notes)
+  migrations/           # 5 migrations (init → favorites → filters → notes → note_song_metadata)
 ```
 
 ---
@@ -67,7 +70,7 @@ prisma/
 
 **Favorite** — `userId`, `videoId`, `title`, `thumbnail`, `duration`, `durationSec`, `url`, `bpm?`, `key?`, `beatType?`, `inspiredBy[]`, `tags[]`, `dateFilter?`, `freeFilter`, `artistFilter?`, `typeBeat` — plus unique `[userId, videoId]`
 
-**Note** — `userId`, `videoId`, `blocks Json` (array of `TextBlock | VoiceBlock`) — unique `[userId, videoId]`
+**Note** — `userId`, `videoId`, `blocks Json`, `timecodes Json`, `songName?`, `isPublic`, `publicId?` (unique share slug), `bpm?`, `key?`, `beatType?`, `videoTitle?`, `videoThumbnail?`, `videoUrl?` — unique `[userId, videoId]`
 
 ### Note block shapes
 
@@ -79,7 +82,11 @@ interface VoiceBlock {
   audioBase64: string; mimeType: string;
   duration: number; createdAt: string;
   beatTimecode: number | null; // beat playback position when recording started (after lead-in)
+  sectionTag: string | null;  // timecode section label active when recording started
 }
+
+interface Timecode { id: string; time: number; label: string; }
+// Stored on Note.timecodes (Json column), not in the blocks array.
 ```
 
 ---
@@ -107,6 +114,14 @@ All block mutations use `setBlocks(prev => ...)` to avoid operating on stale sta
 
 ### `BeatPlayer` is a `forwardRef` component
 Exposes `BeatPlayerHandle`: `{ getCurrentTime, getDuration, pause, loadAndPlayFrom }`. The ref is used by the page to capture beat timecode on record start and to seek/play on "Play with beat".
+
+### Timecode system
+- `Note.timecodes` — separate `Json` column (not in blocks array). Shape: `Timecode[]`.
+- `parseTimecodes(text)` in `app/lib/ytdlp.ts` — extracts `0:00 Intro` style entries from a string. Used by `GET /api/analyze` which now returns a `timecodes` field alongside beat analysis.
+- `TimecodeTimeline` component — rAF-driven playhead (reads `beatPlayerRef.current?.getCurrentTime()` at 60fps). Click anywhere on the bar to seek. Labels positioned absolutely at `(time / duration) * 100%`. Edit icon opens `TimecodeEditor`.
+- `TimecodeEditor` component — shown at top of content area (not sticky header). "Detect from video" button calls `/api/analyze` and imports parsed timecodes. "Add at X" button adds a timecode at current beat position.
+- Auto-tag on recording: `getSectionAtTime(timecodes, currentTime)` finds the active section. Regular recording tags if `beatPlayerRef.current?.isPlaying()`. Beat-sync recording always tags using the *chosen* timecode (not the lead-in start).
+- Migration `20260403000004_note_timecodes` adds the column.
 
 ### Beat-synced voice notes
 - User picks a beat position in the `InsertBar` picker (timecode input + arrow keys + slider + live preview)

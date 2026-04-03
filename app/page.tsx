@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense } from "react";
 
 type Format = "mp3" | "mp4" | "wav";
-type Tab = "download" | "search" | "favorites";
+type Tab = "download" | "search" | "favorites" | "songs";
 type AuthMode = "login" | "signup";
 type DateFilter = "year" | "6months" | "1month" | "2weeks" | "1week" | "1day";
 type ArtistFilter = "Lil Peep" | "Juice WRLD";
@@ -36,6 +36,19 @@ interface SavedFilters {
 
 interface FavoriteItem extends SearchResult {
   savedFilters: SavedFilters;
+}
+
+interface SongItem {
+  videoId: string;
+  songName: string;
+  bpm: string | null;
+  key: string | null;
+  beatType: string | null;
+  videoTitle: string | null;
+  videoThumbnail: string | null;
+  isPublic: boolean;
+  publicId: string | null;
+  updatedAt: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -506,6 +519,10 @@ function DownloaderForm() {
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
   const [downloadingFav, setDownloadingFav] = useState<string | null>(null);
 
+  // Songs
+  const [songs, setSongs] = useState<SongItem[]>([]);
+  const [songsLoading, setSongsLoading] = useState(false);
+
   const { playingId, loadingId, play, stop } = usePreviewPlayer();
 
   useEffect(() => {
@@ -683,11 +700,20 @@ function DownloaderForm() {
     }
   }
 
+  useEffect(() => {
+    if (tab !== "songs" || !user) return;
+    setSongsLoading(true);
+    fetch("/api/songs")
+      .then((r) => r.json())
+      .then((data) => setSongs(data.songs ?? []))
+      .finally(() => setSongsLoading(false));
+  }, [tab, user]);
+
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
-    setUser(null); setResults([]); setFavorites([]); setFavoriteIds(new Set());
+    setUser(null); setResults([]); setFavorites([]); setFavoriteIds(new Set()); setSongs([]);
     stop();
-    if (tab === "favorites") setTab("download");
+    if (tab === "favorites" || tab === "songs") setTab("download");
   }
 
   const formats: { value: Format; label: string }[] = [
@@ -729,6 +755,21 @@ function DownloaderForm() {
               {favoriteIds.size > 0 && (
                 <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ${tab === "favorites" ? "bg-white/20 text-white" : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400"}`}>
                   {favoriteIds.size}
+                </span>
+              )}
+            </button>
+          )}
+          {user && (
+            <button onClick={() => { setTab("songs"); setError(""); }}
+              className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${tab === "songs" ? "bg-red-500 text-white" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>
+              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+              </svg>
+              Songs
+              {songs.length > 0 && (
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ${tab === "songs" ? "bg-white/20 text-white" : "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"}`}>
+                  {songs.length}
                 </span>
               )}
             </button>
@@ -904,6 +945,73 @@ function DownloaderForm() {
                     setTab("search");
                   }}
                 />
+              ))}
+            </div>
+          )
+        )}
+
+        {/* ── Songs Tab ── */}
+        {tab === "songs" && user && (
+          songsLoading ? (
+            <div className="flex justify-center py-12">
+              <span className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-300 border-t-red-500" />
+            </div>
+          ) : songs.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-16 text-zinc-400">
+              <svg viewBox="0 0 24 24" className="w-12 h-12 text-zinc-200 dark:text-zinc-700" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+              </svg>
+              <p className="text-sm">No songs yet.</p>
+              <p className="text-xs">Open a note and add a song name to see it here.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {songs.map((song) => (
+                <div key={song.videoId} className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 flex items-start gap-4 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 transition-colors">
+                  {song.videoThumbnail && (
+                    <img src={song.videoThumbnail} alt="" className="flex-shrink-0 h-14 w-20 rounded-lg object-cover" />
+                  )}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm leading-tight truncate">{song.songName}</p>
+                        {song.videoTitle && (
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{song.videoTitle}</p>
+                        )}
+                      </div>
+                      <span className={`flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${song.isPublic ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"}`}>
+                        {song.isPublic ? "Public" : "Private"}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {song.beatType && (
+                        <span className="rounded-md bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">{song.beatType}</span>
+                      )}
+                      {song.bpm && (
+                        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium dark:bg-zinc-700">{song.bpm}</span>
+                      )}
+                      {song.key && (
+                        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium dark:bg-zinc-700">{song.key}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => router.push(`/notes/${song.videoId}`)}
+                        className="text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                      >
+                        Open notes →
+                      </button>
+                      {song.isPublic && song.publicId && (
+                        <button
+                          onClick={() => navigator.clipboard.writeText(`${window.location.origin}/view/${song.publicId}`)}
+                          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                        >
+                          Copy share link
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               ))}
             </div>
           )

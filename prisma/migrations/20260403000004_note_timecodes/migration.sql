@@ -1,0 +1,1 @@
+ALTER TABLE "Note" ADD COLUMN "timecodes" JSONB NOT NULL DEFAULT '[]';

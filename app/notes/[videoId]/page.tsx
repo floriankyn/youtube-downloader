@@ -1,7 +1,33 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
+
+// ─── Constants ───────────────────────────────────────────────
+
+const MUSICAL_KEYS = [
+  "C major", "C minor", "C# major", "C# minor",
+  "D major", "D minor", "D# major", "D# minor",
+  "E major", "E minor", "F major", "F minor",
+  "F# major", "F# minor", "G major", "G minor",
+  "G# major", "G# minor", "A major", "A minor",
+  "A# major", "A# minor", "B major", "B minor",
+];
+
+const BEAT_TYPES = [
+  "Trap", "Drill", "UK Drill", "NY Drill", "Boom Bap", "Lo-Fi",
+  "R&B", "Soul", "Jazz", "Afrobeat", "Reggaeton", "Dancehall",
+  "Pop", "Rock", "Dark", "Melodic", "Hard", "Chill",
+  "Ambient", "Plugg", "Rage", "Hyperpop", "Jersey Club", "Phonk",
+  "Memphis", "West Coast", "East Coast", "Southern", "Orchestral",
+  "Cinematic", "Emotional", "Sad", "Hype", "Bouncy", "Smooth",
+];
+
+function parseBpmNumber(bpmStr: string | null): number {
+  if (!bpmStr) return 0;
+  const m = bpmStr.match(/(\d+)/);
+  return m ? parseInt(m[1]) : 0;
+}
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -19,6 +45,13 @@ interface VoiceBlock {
   duration: number;
   createdAt: string;
   beatTimecode: number | null;
+  sectionTag: string | null;
+}
+
+interface Timecode {
+  id: string;
+  time: number;   // seconds
+  label: string;
 }
 
 type Block = TextBlock | VoiceBlock;
@@ -54,6 +87,16 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+}
+
+function getSectionAtTime(timecodes: Timecode[], time: number): string | null {
+  const sorted = [...timecodes].sort((a, b) => a.time - b.time);
+  let label: string | null = null;
+  for (const tc of sorted) {
+    if (tc.time <= time) label = tc.label;
+    else break;
+  }
+  return label;
 }
 
 function formatDuration(sec: number): string {
@@ -213,8 +256,13 @@ function VoicePlayer({
             <div className="h-full rounded-full bg-red-500 transition-all" style={{ width: `${progress * 100}%` }} />
           </div>
           <div className="flex items-center justify-between text-[10px] text-zinc-400">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span>Voice note</span>
+              {block.sectionTag && (
+                <span className="rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-medium text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                  {block.sectionTag}
+                </span>
+              )}
               {hasBeat && (
                 <span className="rounded bg-zinc-200 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">
                   @ {formatDuration(block.beatTimecode!)}
@@ -558,6 +606,7 @@ function AutoTextarea({
 interface BeatPlayerHandle {
   getCurrentTime: () => number;
   getDuration: () => number;
+  isPlaying: () => boolean;
   loadAndPlayFrom: (timecode: number) => Promise<void>;
   pause: () => void;
 }
@@ -608,6 +657,7 @@ function BeatPlayer({ url, title, outputDeviceId }, ref) {
   useImperativeHandle(ref, () => ({
     getCurrentTime: () => audioRef.current?.currentTime ?? 0,
     getDuration: () => audioRef.current?.duration ?? 0,
+    isPlaying: () => !!(audioRef.current && !audioRef.current.paused),
     pause: () => { audioRef.current?.pause(); },
     loadAndPlayFrom: async (timecode: number) => {
       let src = blobUrlRef.current;
@@ -747,6 +797,209 @@ function BeatPlayer({ url, title, outputDeviceId }, ref) {
   );
 });
 
+// ─── Timecode Timeline ────────────────────────────────────────
+
+function TimecodeTimeline({
+  timecodes, beatPlayerRef, onEdit,
+}: {
+  timecodes: Timecode[];
+  beatPlayerRef: React.RefObject<BeatPlayerHandle | null>;
+  onEdit: () => void;
+}) {
+  const [currentTime, setCurrentTime] = useState(0);
+
+  useEffect(() => {
+    let raf: number;
+    function tick() {
+      setCurrentTime(beatPlayerRef.current?.getCurrentTime() ?? 0);
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [beatPlayerRef]);
+
+  const sorted = useMemo(() => [...timecodes].sort((a, b) => a.time - b.time), [timecodes]);
+  const dur = beatPlayerRef.current?.getDuration() || (sorted.length > 0 ? sorted[sorted.length - 1].time + 30 : 300);
+  const progress = dur > 0 ? Math.min(1, currentTime / dur) : 0;
+
+  // active section: last timecode whose time <= currentTime
+  let activeTcId: string | null = null;
+  for (const tc of sorted) {
+    if (tc.time <= currentTime) activeTcId = tc.id;
+    else break;
+  }
+
+  function handleBarClick(e: React.MouseEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    beatPlayerRef.current?.loadAndPlayFrom(frac * dur);
+  }
+
+  if (timecodes.length === 0) {
+    return (
+      <div className="flex items-center gap-3 pt-1.5 border-t border-zinc-100 dark:border-zinc-800">
+        <span className="text-[10px] text-zinc-300 dark:text-zinc-600 flex-1">No timecodes</span>
+        <button onClick={onEdit} className="text-[10px] text-red-500 hover:text-red-600 font-medium">
+          + Detect / Add
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pt-1.5 border-t border-zinc-100 dark:border-zinc-800 space-y-1">
+      {/* Label chips */}
+      <div className="relative h-5">
+        {sorted.map((tc) => {
+          const pct = Math.min(99, (tc.time / dur) * 100);
+          const isActive = tc.id === activeTcId;
+          return (
+            <span
+              key={tc.id}
+              className={`absolute -translate-x-1/2 text-[9px] font-medium whitespace-nowrap transition-colors select-none ${
+                isActive ? "text-red-500" : "text-zinc-400 dark:text-zinc-500"
+              }`}
+              style={{ left: `${pct}%` }}
+            >
+              {tc.label}
+            </span>
+          );
+        })}
+      </div>
+      {/* Seekable bar */}
+      <div className="flex items-center gap-2">
+        <div
+          className="relative flex-1 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700 cursor-pointer overflow-visible"
+          onClick={handleBarClick}
+        >
+          {/* Filled progress */}
+          <div className="absolute h-full rounded-full bg-red-500 pointer-events-none" style={{ width: `${progress * 100}%` }} />
+          {/* Section markers */}
+          {sorted.map((tc) => {
+            const pct = Math.min(99, (tc.time / dur) * 100);
+            return (
+              <div
+                key={tc.id}
+                className="absolute top-1/2 w-px h-3 -translate-y-1/2 bg-zinc-400 dark:bg-zinc-500 pointer-events-none"
+                style={{ left: `${pct}%` }}
+              />
+            );
+          })}
+          {/* Playhead */}
+          <div
+            className="absolute top-1/2 w-2.5 h-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 border-red-500 shadow-sm pointer-events-none"
+            style={{ left: `${progress * 100}%` }}
+          />
+        </div>
+        <button onClick={onEdit} title="Edit timecodes" className="flex-shrink-0 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors">
+          <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Timecode Editor ──────────────────────────────────────────
+
+function TimecodeEditor({
+  timecodes, onChange, onDetect, detecting, beatPlayerRef, onClose,
+}: {
+  timecodes: Timecode[];
+  onChange: (tcs: Timecode[]) => void;
+  onDetect: () => void;
+  detecting: boolean;
+  beatPlayerRef: React.RefObject<BeatPlayerHandle | null>;
+  onClose: () => void;
+}) {
+  const sorted = useMemo(() => [...timecodes].sort((a, b) => a.time - b.time), [timecodes]);
+
+  function addAtCurrentTime() {
+    const t = Math.round(beatPlayerRef.current?.getCurrentTime() ?? 0);
+    onChange([...timecodes, { id: nanoid(), time: t, label: "" }]);
+  }
+
+  function updateLabel(id: string, label: string) {
+    onChange(timecodes.map((tc) => tc.id === id ? { ...tc, label } : tc));
+  }
+
+  function updateTime(id: string, val: string) {
+    const parsed = parseMmSs(val);
+    if (parsed !== null) {
+      onChange(timecodes.map((tc) => tc.id === id ? { ...tc, time: Math.max(0, parsed) } : tc));
+    }
+  }
+
+  function remove(id: string) {
+    onChange(timecodes.filter((tc) => tc.id !== id));
+  }
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-900 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Timecodes</span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onDetect}
+            disabled={detecting}
+            className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-50"
+          >
+            {detecting ? (
+              <span className="w-2.5 h-2.5 rounded-full border border-zinc-400 border-t-transparent animate-spin" />
+            ) : (
+              <svg viewBox="0 0 24 24" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2}>
+                <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+              </svg>
+            )}
+            Detect from video
+          </button>
+          <button
+            onClick={addAtCurrentTime}
+            className="text-[10px] rounded-full border border-zinc-300 px-2 py-0.5 text-zinc-500 hover:border-zinc-500 hover:text-zinc-700 dark:border-zinc-600 dark:hover:border-zinc-400"
+          >
+            + Add at {formatDuration(beatPlayerRef.current?.getCurrentTime() ?? 0)}
+          </button>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+            <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      {sorted.length === 0 ? (
+        <p className="text-[10px] text-zinc-400">No timecodes yet. Click "Detect from video" to auto-import from the description, or "Add" to create one manually.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {sorted.map((tc) => (
+            <div key={tc.id} className="flex items-center gap-2">
+              <input
+                type="text"
+                defaultValue={formatDuration(tc.time)}
+                onBlur={(e) => updateTime(tc.id, e.target.value)}
+                className="w-14 shrink-0 rounded border border-zinc-200 bg-white px-1.5 py-1 text-center text-xs font-mono outline-none focus:border-red-400 dark:border-zinc-600 dark:bg-zinc-800"
+              />
+              <input
+                type="text"
+                value={tc.label}
+                onChange={(e) => updateLabel(tc.id, e.target.value)}
+                placeholder="Label…"
+                className="flex-1 rounded border border-zinc-200 bg-white px-2 py-1 text-xs outline-none focus:border-red-400 dark:border-zinc-600 dark:bg-zinc-800"
+              />
+              <button onClick={() => remove(tc.id)} className="shrink-0 text-zinc-400 hover:text-red-500 transition-colors">
+                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Beat Badges ─────────────────────────────────────────────
 
 function BeatBadges({ fav }: { fav: Favorite }) {
@@ -783,11 +1036,28 @@ export default function NotesPage() {
 
   const [favorite, setFavorite] = useState<Favorite | null>(null);
   const [blocks, setBlocks] = useState<Block[]>([{ id: nanoid(), type: "text", content: "" }]);
+  const [timecodes, setTimecodes] = useState<Timecode[]>([]);
+  const [showTimecodeEditor, setShowTimecodeEditor] = useState(false);
+  const [detectingTimecodes, setDetectingTimecodes] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
   const [activeRecordIndex, setActiveRecordIndex] = useState<number | null>(null);
 
+  // ── Song / beat metadata (user-editable) ─────────────────────
+  const [songName, setSongName] = useState("");
+  const [isPublic, setIsPublic] = useState(false);
+  const [publicId, setPublicId] = useState<string | null>(null);
+  const [noteBpm, setNoteBpm] = useState("");
+  const [noteKey, setNoteKey] = useState("");
+  const [noteBeatType, setNoteBeatType] = useState("");
+  const [videoTitle, setVideoTitle] = useState("");
+  const [videoThumbnail, setVideoThumbnail] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [linkCopied, setLinkCopied] = useState(false);
+
   // ── Audio devices ─────────────────────────────────────────
+  const [reanalyzing, setReanalyzing] = useState(false);
+  const [showReanalyzeConfirm, setShowReanalyzeConfirm] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [inputDeviceId, setInputDeviceId] = useState<string>("");
@@ -813,14 +1083,36 @@ export default function NotesPage() {
   const activeRecordIndexRef = useRef<number | null>(null);
   // Captures beat position at recording start, read by insertVoiceBlock callback
   const beatTimecodeAtRecordStartRef = useRef<number | null>(null);
+  // Captures the active timecode section label at recording start
+  const sectionTagAtRecordStartRef = useRef<string | null>(null);
   // Imperative handle into BeatPlayer
   const beatPlayerRef = useRef<BeatPlayerHandle>(null);
-  // Ref so save timeout always reads latest blocks, never stale
+  // Refs so save timeout always reads latest values, never stale
   const blocksRef = useRef<Block[]>(blocks);
+  const timecodesRef = useRef<Timecode[]>(timecodes);
+  const songNameRef = useRef("");
+  const isPublicRef = useRef(false);
+  const publicIdRef = useRef<string | null>(null);
+  const noteBpmRef = useRef("");
+  const noteKeyRef = useRef("");
+  const noteBeatTypeRef = useRef("");
+  const videoTitleRef = useRef("");
+  const videoThumbnailRef = useRef("");
+  const videoUrlRef = useRef("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Keep blocksRef in sync
+  // Keep refs in sync
   useEffect(() => { blocksRef.current = blocks; }, [blocks]);
+  useEffect(() => { timecodesRef.current = timecodes; }, [timecodes]);
+  useEffect(() => { songNameRef.current = songName; }, [songName]);
+  useEffect(() => { isPublicRef.current = isPublic; }, [isPublic]);
+  useEffect(() => { publicIdRef.current = publicId; }, [publicId]);
+  useEffect(() => { noteBpmRef.current = noteBpm; }, [noteBpm]);
+  useEffect(() => { noteKeyRef.current = noteKey; }, [noteKey]);
+  useEffect(() => { noteBeatTypeRef.current = noteBeatType; }, [noteBeatType]);
+  useEffect(() => { videoTitleRef.current = videoTitle; }, [videoTitle]);
+  useEffect(() => { videoThumbnailRef.current = videoThumbnail; }, [videoThumbnail]);
+  useEffect(() => { videoUrlRef.current = videoUrl; }, [videoUrl]);
 
   // ── Load ──────────────────────────────────────────────────
 
@@ -834,19 +1126,53 @@ export default function NotesPage() {
         if (!data) return;
         setFavorite(data.favorite);
         if (data.note?.blocks?.length) setBlocks(data.note.blocks as Block[]);
+        if (data.note?.timecodes?.length) setTimecodes(data.note.timecodes as Timecode[]);
+
+        // Song / beat metadata — note values take priority, fall back to favorite
+        const note = data.note;
+        const fav = data.favorite;
+        if (note?.songName) setSongName(note.songName);
+        if (note?.isPublic) setIsPublic(true);
+        if (note?.publicId) { setPublicId(note.publicId); publicIdRef.current = note.publicId; }
+        // BPM/key/beatType: use note value if set, else favorite
+        const bpm = note?.bpm ?? fav?.bpm ?? "";
+        const key = note?.key ?? fav?.key ?? "";
+        const bt = note?.beatType ?? fav?.beatType ?? "";
+        setNoteBpm(bpm); noteBpmRef.current = bpm;
+        setNoteKey(key); noteKeyRef.current = key;
+        setNoteBeatType(bt); noteBeatTypeRef.current = bt;
+        // Cache video info for orphan access (note without favorite)
+        const title = fav?.title ?? note?.videoTitle ?? "";
+        const thumb = fav?.thumbnail ?? note?.videoThumbnail ?? "";
+        const url = fav?.url ?? note?.videoUrl ?? "";
+        setVideoTitle(title); videoTitleRef.current = title;
+        setVideoThumbnail(thumb); videoThumbnailRef.current = thumb;
+        setVideoUrl(url); videoUrlRef.current = url;
       })
       .finally(() => setLoading(false));
   }, [videoId, router]);
 
   // ── Save ──────────────────────────────────────────────────
 
-  const save = useCallback(async (blocksToSave: Block[]) => {
+  const save = useCallback(async () => {
     setSaveStatus("saving");
     try {
       await fetch(`/api/notes/${videoId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blocks: blocksToSave }),
+        body: JSON.stringify({
+          blocks: blocksRef.current,
+          timecodes: timecodesRef.current,
+          songName: songNameRef.current || null,
+          isPublic: isPublicRef.current,
+          publicId: publicIdRef.current,
+          bpm: noteBpmRef.current || null,
+          key: noteKeyRef.current || null,
+          beatType: noteBeatTypeRef.current || null,
+          videoTitle: videoTitleRef.current || null,
+          videoThumbnail: videoThumbnailRef.current || null,
+          videoUrl: videoUrlRef.current || null,
+        }),
       });
       setSaveStatus("saved");
     } catch {
@@ -854,10 +1180,94 @@ export default function NotesPage() {
     }
   }, [videoId]);
 
-  function scheduleSave(updated: Block[]) {
+  function scheduleSave() {
     setSaveStatus("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => save(updated), 1200);
+    saveTimerRef.current = setTimeout(() => save(), 1200);
+  }
+
+  function updateTimecodes(updated: Timecode[]) {
+    setTimecodes(updated);
+    timecodesRef.current = updated;
+    scheduleSave();
+  }
+
+  async function reanalyze() {
+    const url = videoUrlRef.current || favorite?.url;
+    if (!url || reanalyzing) return;
+    setReanalyzing(true);
+    try {
+      const res = await fetch(`/api/analyze?url=${encodeURIComponent(url)}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+
+      // Update note-level beat metadata
+      const newBpm = data.bpm ?? noteBpmRef.current;
+      const newKey = data.key ?? noteKeyRef.current;
+      const newBt = data.beatType ?? noteBeatTypeRef.current;
+      setNoteBpm(newBpm); noteBpmRef.current = newBpm;
+      setNoteKey(newKey); noteKeyRef.current = newKey;
+      setNoteBeatType(newBt); noteBeatTypeRef.current = newBt;
+
+      // Also update favorite state if present
+      if (favorite) {
+        const updated = {
+          ...favorite,
+          bpm: newBpm,
+          key: newKey,
+          beatType: newBt,
+          inspiredBy: data.inspiredBy?.length ? data.inspiredBy : favorite.inspiredBy,
+          tags: data.tags?.length ? data.tags : favorite.tags,
+        };
+        setFavorite(updated);
+        await fetch("/api/favorites", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            videoId: favorite.videoId,
+            bpm: updated.bpm,
+            key: updated.key,
+            beatType: updated.beatType,
+            inspiredBy: updated.inspiredBy,
+            tags: updated.tags,
+          }),
+        });
+      }
+
+      // Refresh timecodes if found
+      if (Array.isArray(data.timecodes) && data.timecodes.length > 0) {
+        const tcs: Timecode[] = data.timecodes.map((t: { time: number; label: string }) => ({
+          id: nanoid(), time: t.time, label: t.label,
+        }));
+        updateTimecodes(tcs);
+      }
+
+      scheduleSave();
+    } catch {
+      // silent — user sees no change
+    } finally {
+      setReanalyzing(false);
+    }
+  }
+
+  async function detectTimecodes() {
+    if (!favorite) return;
+    setDetectingTimecodes(true);
+    try {
+      const res = await fetch(`/api/analyze?url=${encodeURIComponent(favorite.url)}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (Array.isArray(data.timecodes) && data.timecodes.length > 0) {
+        const tcs: Timecode[] = data.timecodes.map((t: { time: number; label: string }) => ({
+          id: nanoid(), time: t.time, label: t.label,
+        }));
+        updateTimecodes(tcs);
+      }
+    } catch {
+      // silent — user can add manually
+    } finally {
+      setDetectingTimecodes(false);
+    }
   }
 
   // ── Block ops ─────────────────────────────────────────────
@@ -865,7 +1275,7 @@ export default function NotesPage() {
   function updateTextBlock(id: string, content: string) {
     setBlocks((prev) => {
       const updated = prev.map((b) => b.id === id && b.type === "text" ? { ...b, content } : b);
-      scheduleSave(updated);
+      scheduleSave();
       return updated;
     });
   }
@@ -876,13 +1286,11 @@ export default function NotesPage() {
       const final = updated.length === 0
         ? [{ id: nanoid(), type: "text" as const, content: "" }]
         : updated;
-      scheduleSave(final);
+      scheduleSave();
       return final;
     });
   }
 
-  // Uses functional setBlocks so it always operates on current state,
-  // not whatever `blocks` was when the recording started.
   function insertTextBlock(atIndex: number) {
     setBlocks((prev) => {
       const updated = [
@@ -890,15 +1298,15 @@ export default function NotesPage() {
         { id: nanoid(), type: "text" as const, content: "" },
         ...prev.slice(atIndex),
       ];
-      scheduleSave(updated);
+      scheduleSave();
       return updated;
     });
   }
 
-  function insertVoiceBlock(atIndex: number, audioBase64: string, mimeType: string, duration: number, beatTimecode: number | null) {
+  function insertVoiceBlock(atIndex: number, audioBase64: string, mimeType: string, duration: number, beatTimecode: number | null, sectionTag: string | null) {
     const voiceBlock: VoiceBlock = {
       id: nanoid(), type: "voice", audioBase64, mimeType, duration,
-      createdAt: new Date().toISOString(), beatTimecode,
+      createdAt: new Date().toISOString(), beatTimecode, sectionTag,
     };
     setBlocks((prev) => {
       const updated = [
@@ -907,8 +1315,7 @@ export default function NotesPage() {
         { id: nanoid(), type: "text" as const, content: "" },
         ...prev.slice(atIndex),
       ];
-      // blocksRef will be updated by the useEffect above before the timeout fires
-      scheduleSave(updated);
+      scheduleSave();
       return updated;
     });
     setActiveRecordIndex(null);
@@ -921,13 +1328,18 @@ export default function NotesPage() {
   const recorder = useRecorder((base64, mimeType, duration) => {
     const idx = activeRecordIndexRef.current;
     if (idx !== null) {
-      insertVoiceBlock(idx, base64, mimeType, duration, beatTimecodeAtRecordStartRef.current);
+      insertVoiceBlock(idx, base64, mimeType, duration, beatTimecodeAtRecordStartRef.current, sectionTagAtRecordStartRef.current);
     }
   }, inputDeviceId || undefined);
 
   function handleStartRecord(index: number) {
     activeRecordIndexRef.current = index;
     beatTimecodeAtRecordStartRef.current = null;
+    // Auto-tag if beat is actively playing
+    const isPlaying = beatPlayerRef.current?.isPlaying() ?? false;
+    sectionTagAtRecordStartRef.current = isPlaying
+      ? getSectionAtTime(timecodesRef.current, beatPlayerRef.current?.getCurrentTime() ?? 0)
+      : null;
     setActiveRecordIndex(index);
     recorder.start();
   }
@@ -936,6 +1348,8 @@ export default function NotesPage() {
     const startTime = leadIn ? Math.max(0, chosenTimecode - 5) : chosenTimecode;
     activeRecordIndexRef.current = index;
     beatTimecodeAtRecordStartRef.current = startTime;
+    // Tag with the section at the chosen entry point (not the lead-in start)
+    sectionTagAtRecordStartRef.current = getSectionAtTime(timecodesRef.current, chosenTimecode);
     setActiveRecordIndex(index);
     beatPlayerRef.current?.loadAndPlayFrom(startTime);
     recorder.start();
@@ -951,7 +1365,8 @@ export default function NotesPage() {
     );
   }
 
-  if (!favorite) return null;
+  // Allow rendering if we have either a favorite or cached video info from the note
+  if (!favorite && !videoTitle) return null;
 
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-950">
@@ -968,10 +1383,12 @@ export default function NotesPage() {
                 <path d="M19 12H5M12 5l-7 7 7 7" />
               </svg>
             </button>
-            <img src={favorite.thumbnail} alt="" className="flex-shrink-0 h-12 w-20 rounded-md object-cover" />
+            {videoThumbnail && (
+              <img src={videoThumbnail} alt="" className="flex-shrink-0 h-12 w-20 rounded-md object-cover" />
+            )}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold leading-tight truncate">{favorite.title}</p>
-              <BeatBadges fav={favorite} />
+              <p className="text-sm font-semibold leading-tight truncate">{videoTitle}</p>
+              <BeatBadges fav={{ videoId: favorite?.videoId ?? videoId, title: favorite?.title ?? videoTitle, thumbnail: favorite?.thumbnail ?? videoThumbnail, duration: favorite?.duration ?? "", url: favorite?.url ?? videoUrl, bpm: noteBpm || favorite?.bpm || null, key: noteKey || favorite?.key || null, beatType: noteBeatType || favorite?.beatType || null, inspiredBy: favorite?.inspiredBy ?? [], tags: favorite?.tags ?? [] }} />
             </div>
             <span className={`flex-shrink-0 text-[10px] transition-colors ${
               saveStatus === "saving" ? "text-zinc-400" :
@@ -980,6 +1397,55 @@ export default function NotesPage() {
             }`}>
               {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
             </span>
+            {/* Re-analyze */}
+            <button
+              onClick={() => setShowReanalyzeConfirm(true)}
+              disabled={reanalyzing}
+              title="Re-analyze beat metadata and timecodes"
+              className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-40 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className={`w-3.5 h-3.5 ${reanalyzing ? "animate-spin" : ""}`}
+                fill="none" stroke="currentColor" strokeWidth={2}
+              >
+                <path d="M23 4v6h-6" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+            </button>
+            {/* Visibility toggle */}
+            <button
+              onClick={() => {
+                const next = !isPublic;
+                let pid = publicId;
+                if (next && !pid) {
+                  pid = nanoid() + nanoid();
+                  setPublicId(pid);
+                  publicIdRef.current = pid;
+                }
+                setIsPublic(next);
+                isPublicRef.current = next;
+                scheduleSave();
+              }}
+              title={isPublic ? "Public — click to make private" : "Private — click to make public"}
+              className={`flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full transition-colors ${
+                isPublic
+                  ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+              }`}
+            >
+              {isPublic ? (
+                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              )}
+            </button>
             {/* Device settings toggle */}
             <button
               onClick={() => setShowDevices((v) => !v)}
@@ -1033,13 +1499,149 @@ export default function NotesPage() {
             </div>
           )}
 
+          {/* Share link row — visible when public */}
+          {isPublic && publicId && (
+            <div className="flex items-center gap-2 rounded-lg bg-green-50 dark:bg-green-900/20 px-3 py-1.5">
+              <svg viewBox="0 0 24 24" className="flex-shrink-0 w-3.5 h-3.5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+              <span className="flex-1 text-xs text-green-700 dark:text-green-400 truncate font-mono">
+                {typeof window !== "undefined" ? `${window.location.origin}/view/${publicId}` : `/view/${publicId}`}
+              </span>
+              <button
+                onClick={() => {
+                  const link = `${window.location.origin}/view/${publicId}`;
+                  navigator.clipboard.writeText(link).then(() => {
+                    setLinkCopied(true);
+                    setTimeout(() => setLinkCopied(false), 2000);
+                  });
+                }}
+                className="flex-shrink-0 text-xs font-medium text-green-700 dark:text-green-400 hover:underline"
+              >
+                {linkCopied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          )}
+
           {/* Row 3: beat player */}
-          <BeatPlayer ref={beatPlayerRef} url={favorite.url} title={favorite.title} outputDeviceId={outputDeviceId || undefined} />
+          <BeatPlayer ref={beatPlayerRef} url={videoUrl || favorite?.url || ""} title={videoTitle} outputDeviceId={outputDeviceId || undefined} />
+          {/* Row 4: timecode timeline */}
+          <TimecodeTimeline
+            timecodes={timecodes}
+            beatPlayerRef={beatPlayerRef}
+            onEdit={() => setShowTimecodeEditor((v) => !v)}
+          />
         </div>
       </div>
 
       {/* ── Editor ── */}
       <div className="mx-auto max-w-2xl px-4 py-8 space-y-1">
+        {/* Song name + beat info */}
+        <div className="mb-6 space-y-3">
+          <input
+            type="text"
+            value={songName}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSongName(v);
+              songNameRef.current = v;
+              scheduleSave();
+            }}
+            placeholder="Song name…"
+            className="w-full bg-transparent text-2xl font-bold placeholder-zinc-300 dark:placeholder-zinc-600 outline-none border-b border-transparent focus:border-zinc-200 dark:focus:border-zinc-700 pb-1 transition-colors"
+          />
+          {/* BPM / Key / Beat type editors */}
+          <div className="flex flex-wrap gap-3 items-start">
+            {/* BPM */}
+            <div className="flex flex-col gap-1 min-w-[140px]">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">BPM</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={40}
+                  max={300}
+                  value={parseBpmNumber(noteBpm) || ""}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value);
+                    const v = isNaN(n) ? "" : `${Math.min(300, Math.max(40, n))} BPM`;
+                    setNoteBpm(v); noteBpmRef.current = v; scheduleSave();
+                  }}
+                  onKeyDown={(e) => {
+                    const cur = parseBpmNumber(noteBpm) || 120;
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      const v = `${Math.min(300, cur + 1)} BPM`;
+                      setNoteBpm(v); noteBpmRef.current = v; scheduleSave();
+                    } else if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      const v = `${Math.max(40, cur - 1)} BPM`;
+                      setNoteBpm(v); noteBpmRef.current = v; scheduleSave();
+                    }
+                  }}
+                  placeholder="—"
+                  className="w-16 rounded-md border border-zinc-200 dark:border-zinc-700 bg-transparent px-2 py-1 text-sm text-center outline-none focus:border-red-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <input
+                  type="range"
+                  min={40}
+                  max={300}
+                  value={parseBpmNumber(noteBpm) || 120}
+                  onChange={(e) => {
+                    const v = `${e.target.value} BPM`;
+                    setNoteBpm(v); noteBpmRef.current = v; scheduleSave();
+                  }}
+                  className="w-24 h-1 accent-red-500 cursor-pointer"
+                />
+              </div>
+            </div>
+            {/* Key */}
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Key</span>
+              <select
+                value={noteKey}
+                onChange={(e) => {
+                  setNoteKey(e.target.value); noteKeyRef.current = e.target.value; scheduleSave();
+                }}
+                className="rounded-md border border-zinc-200 dark:border-zinc-700 bg-transparent px-2 py-1 text-sm outline-none focus:border-red-400 dark:text-zinc-200"
+              >
+                <option value="">—</option>
+                {MUSICAL_KEYS.map((k) => (
+                  <option key={k} value={k}>{k}</option>
+                ))}
+              </select>
+            </div>
+            {/* Beat type */}
+            <div className="flex flex-col gap-1 flex-1 min-w-[140px]">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Style</span>
+              <input
+                list="beat-types-list"
+                value={noteBeatType}
+                onChange={(e) => {
+                  setNoteBeatType(e.target.value); noteBeatTypeRef.current = e.target.value; scheduleSave();
+                }}
+                placeholder="—"
+                className="rounded-md border border-zinc-200 dark:border-zinc-700 bg-transparent px-2 py-1 text-sm outline-none focus:border-red-400"
+              />
+              <datalist id="beat-types-list">
+                {BEAT_TYPES.map((bt) => <option key={bt} value={bt} />)}
+              </datalist>
+            </div>
+          </div>
+        </div>
+
+        {showTimecodeEditor && (
+          <div className="mb-4">
+            <TimecodeEditor
+              timecodes={timecodes}
+              onChange={updateTimecodes}
+              onDetect={detectTimecodes}
+              detecting={detectingTimecodes}
+              beatPlayerRef={beatPlayerRef}
+              onClose={() => setShowTimecodeEditor(false)}
+            />
+          </div>
+        )}
         {blocks.map((block, i) => (
           <div key={block.id}>
             <InsertBar
@@ -1090,6 +1692,43 @@ export default function NotesPage() {
           onPauseBeat={() => beatPlayerRef.current?.pause()}
         />
       </div>
+
+      {/* Re-analyze confirmation modal */}
+      {showReanalyzeConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowReanalyzeConfirm(false)}
+        >
+          <div
+            className="bg-white dark:bg-zinc-900 rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col gap-1">
+              <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Re-analyze beat?</h2>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                This will re-fetch metadata from YouTube and overwrite the current BPM, key, beat type, artist references, tags, and timecodes. Your notes and voice recordings won&apos;t be affected.
+              </p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowReanalyzeConfirm(false)}
+                className="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowReanalyzeConfirm(false);
+                  reanalyze();
+                }}
+                className="px-4 py-1.5 rounded-lg text-sm font-medium bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 hover:opacity-80 transition-opacity"
+              >
+                Re-analyze
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

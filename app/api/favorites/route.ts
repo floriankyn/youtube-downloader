@@ -59,6 +59,31 @@ export async function POST(request: NextRequest) {
   return Response.json({ favorite });
 }
 
+export async function PATCH(request: NextRequest) {
+  const session = await getSession();
+  if (!session?.userId) {
+    return Response.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  const { videoId, bpm, key, beatType, inspiredBy, tags } = await request.json();
+  if (!videoId) {
+    return Response.json({ error: "Missing videoId" }, { status: 400 });
+  }
+
+  const favorite = await prisma.favorite.update({
+    where: { userId_videoId: { userId: session.userId, videoId } },
+    data: {
+      bpm: bpm ?? null,
+      key: key ?? null,
+      beatType: beatType ?? null,
+      inspiredBy: inspiredBy ?? [],
+      tags: tags ?? [],
+    },
+  });
+
+  return Response.json({ favorite });
+}
+
 export async function DELETE(request: NextRequest) {
   const session = await getSession();
   if (!session?.userId) {

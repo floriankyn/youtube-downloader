@@ -66,6 +66,15 @@ Record a voice note at a specific moment in the beat:
   - **▶** — listen to the voice note alone
   - **▶ + beat** — play the voice note and beat together in sync from the saved position
 
+#### Timecodes
+
+Songs often have timestamps in their YouTube descriptions (`0:00 Intro`, `1:23 Verse 1`…). The notes page surfaces these as a visual timeline below the beat player:
+
+- **Auto-detect** — click "Detect / Add" to import timecodes directly from the video's description. Timecodes are parsed and saved to your note automatically.
+- **Manual edit** — add, edit, or delete any timecode. The time input accepts `MM:SS` format. The "Add at X" button inserts a new timecode at the beat's current playback position.
+- **Interactive timeline** — a seekable bar with a live playhead shows where you are in the song. Labels highlight the active section as the beat plays. Click anywhere on the bar to seek.
+- **Auto-tag on recording** — when you record a voice note while the beat is playing, the active section label (e.g. "Verse 1") is automatically attached to the voice note as a badge. Beat-synced recordings use the chosen beat position to find the section.
+
 #### Audio Device Selection
 
 A mic icon in the notes header opens a device settings panel:

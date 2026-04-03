@@ -25,6 +25,41 @@ export function isValidYouTubeUrl(url: string): boolean {
   return /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)/.test(url);
 }
 
+export interface ParsedTimecode {
+  time: number;   // seconds
+  label: string;
+}
+
+function toSeconds(timeStr: string): number {
+  const parts = timeStr.split(":").map(Number);
+  if (parts.some(isNaN)) return -1;
+  return parts.length === 3
+    ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+    : parts[0] * 60 + parts[1];
+}
+
+export function parseTimecodes(text: string): ParsedTimecode[] {
+  const results: ParsedTimecode[] = [];
+
+  // yt-dlp sometimes escapes newlines as the two chars \ + n — normalise both
+  const normalised = text.replace(/\\n/g, "\n");
+  const lines = normalised.split(/\r?\n/);
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    // Must start with an optional bracket then MM:SS or H:MM:SS
+    const m = line.match(/^[\[\(]?(\d{1,2}:\d{2}(?::\d{2})?)[\]\)]?\s*[-–—|]?\s*(.+)/);
+    if (!m) continue;
+    const label = m[2].trim();
+    if (!label || label.length > 80) continue;
+    const secs = toSeconds(m[1]);
+    if (secs < 0) continue;
+    if (!results.some((r) => r.time === secs)) results.push({ time: secs, label });
+  }
+
+  return results.sort((a, b) => a.time - b.time);
+}
+
 export interface BeatAnalysis {
   title: string;
   bpm: string | null;

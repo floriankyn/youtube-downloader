@@ -4,6 +4,7 @@ import {
   getYtDlpPath,
   isValidYouTubeUrl,
   analyzeBeatInfo,
+  parseTimecodes,
 } from "@/app/lib/ytdlp";
 
 export async function GET(request: NextRequest) {
@@ -62,8 +63,9 @@ export async function GET(request: NextRequest) {
     }
 
     const analysis = analyzeBeatInfo(title.trim(), description, comments);
+    const timecodes = parseTimecodes(description);
 
-    return Response.json(analysis);
+    return Response.json({ ...analysis, timecodes });
   } catch {
     return Response.json(
       { error: "Failed to analyze video" },

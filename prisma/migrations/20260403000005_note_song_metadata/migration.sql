@@ -1,0 +1,10 @@
+ALTER TABLE "Note" ADD COLUMN "songName" TEXT;
+ALTER TABLE "Note" ADD COLUMN "isPublic" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Note" ADD COLUMN "publicId" TEXT;
+ALTER TABLE "Note" ADD COLUMN "bpm" TEXT;
+ALTER TABLE "Note" ADD COLUMN "key" TEXT;
+ALTER TABLE "Note" ADD COLUMN "beatType" TEXT;
+ALTER TABLE "Note" ADD COLUMN "videoTitle" TEXT;
+ALTER TABLE "Note" ADD COLUMN "videoThumbnail" TEXT;
+ALTER TABLE "Note" ADD COLUMN "videoUrl" TEXT;
+CREATE UNIQUE INDEX "Note_publicId_key" ON "Note"("publicId");
