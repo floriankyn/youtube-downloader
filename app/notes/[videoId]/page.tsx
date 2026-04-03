@@ -62,14 +62,19 @@ function formatDuration(sec: number): string {
 }
 
 // ─── Voice Recorder Hook ──────────────────────────────────────
+// onDoneRef pattern: recorder.onstop always calls the *current* callback,
+// never a stale one captured at recording-start time.
 
 function useRecorder(onDone: (base64: string, mimeType: string, duration: number) => void) {
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone; // keep fresh every render, no effect needed
+
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const startTimeRef = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const start = useCallback(async () => {
     try {
@@ -88,7 +93,7 @@ function useRecorder(onDone: (base64: string, mimeType: string, duration: number
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
         const base64 = await blobToBase64(blob);
         stream.getTracks().forEach((t) => t.stop());
-        onDone(base64, recorder.mimeType, duration);
+        onDoneRef.current(base64, recorder.mimeType, duration); // always latest
       };
 
       recorder.start(100);
@@ -101,7 +106,7 @@ function useRecorder(onDone: (base64: string, mimeType: string, duration: number
     } catch {
       alert("Microphone access denied.");
     }
-  }, [onDone]);
+  }, []); // stable — no deps needed thanks to ref
 
   const stop = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -125,16 +130,11 @@ function VoicePlayer({ block, onDelete }: { block: VoiceBlock; onDelete: () => v
   function toggle() {
     const audio = audioRef.current;
     if (!audio) return;
-    if (playing) {
-      audio.pause();
-    } else {
-      audio.play();
-    }
+    playing ? audio.pause() : audio.play();
   }
 
   return (
     <div className="flex items-center gap-3 rounded-xl bg-zinc-100 px-4 py-3 dark:bg-zinc-800 group">
-      {/* Hidden audio element */}
       <audio
         ref={audioRef}
         src={src}
@@ -146,8 +146,6 @@ function VoicePlayer({ block, onDelete }: { block: VoiceBlock; onDelete: () => v
           if (a.duration) setProgress(a.currentTime / a.duration);
         }}
       />
-
-      {/* Play/pause */}
       <button
         onClick={toggle}
         className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors"
@@ -162,22 +160,15 @@ function VoicePlayer({ block, onDelete }: { block: VoiceBlock; onDelete: () => v
           </svg>
         )}
       </button>
-
-      {/* Waveform bar */}
       <div className="flex-1 flex flex-col gap-1">
         <div className="h-1.5 w-full rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-red-500 transition-all"
-            style={{ width: `${progress * 100}%` }}
-          />
+          <div className="h-full rounded-full bg-red-500 transition-all" style={{ width: `${progress * 100}%` }} />
         </div>
         <div className="flex justify-between text-[10px] text-zinc-400">
           <span>Voice note</span>
           <span>{formatDuration(block.duration)}</span>
         </div>
       </div>
-
-      {/* Delete */}
       <button
         onClick={onDelete}
         className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-zinc-400 hover:text-red-500"
@@ -193,13 +184,8 @@ function VoicePlayer({ block, onDelete }: { block: VoiceBlock; onDelete: () => v
 
 // ─── Insert Voice Note Button ─────────────────────────────────
 
-function InsertVoiceButton({
-  index,
-  recording,
-  elapsed,
-  activeIndex,
-  onStartRecord,
-  onStopRecord,
+function InsertBar({
+  index, recording, elapsed, activeIndex, onStartRecord, onStopRecord, onInsertSection,
 }: {
   index: number;
   recording: boolean;
@@ -207,6 +193,7 @@ function InsertVoiceButton({
   activeIndex: number | null;
   onStartRecord: (index: number) => void;
   onStopRecord: () => void;
+  onInsertSection: (index: number) => void;
 }) {
   const isActive = activeIndex === index;
 
@@ -225,18 +212,30 @@ function InsertVoiceButton({
           {formatDuration(elapsed)} — tap to save
         </button>
       ) : (
-        <button
-          onClick={() => onStartRecord(index)}
-          disabled={recording}
-          className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity hover:border-red-300 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
-          title="Record a voice note here"
-        >
-          <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2}>
-            <rect x="9" y="2" width="6" height="11" rx="3" />
-            <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6" />
-          </svg>
-          Voice note
-        </button>
+        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={() => onInsertSection(index)}
+            className="flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500 dark:hover:border-zinc-500"
+            title="Add a new section"
+          >
+            <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Section
+          </button>
+          <button
+            onClick={() => onStartRecord(index)}
+            disabled={recording}
+            className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-400 hover:border-red-300 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
+            title="Record a voice note here"
+          >
+            <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2}>
+              <rect x="9" y="2" width="6" height="11" rx="3" />
+              <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6" />
+            </svg>
+            Voice note
+          </button>
+        </div>
       )}
       <div className="flex-1 h-px bg-zinc-100 dark:bg-zinc-800 group-hover:bg-zinc-200 dark:group-hover:bg-zinc-700 transition-colors" />
     </div>
@@ -246,12 +245,11 @@ function InsertVoiceButton({
 // ─── Auto-resize Textarea ─────────────────────────────────────
 
 function AutoTextarea({
-  value,
-  onChange,
-  placeholder,
+  value, onChange, onDelete, placeholder,
 }: {
   value: string;
   onChange: (v: string) => void;
+  onDelete?: () => void;
   placeholder: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -263,11 +261,19 @@ function AutoTextarea({
     }
   }, [value]);
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Backspace" && value === "" && onDelete) {
+      e.preventDefault();
+      onDelete();
+    }
+  }
+
   return (
     <textarea
       ref={ref}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onKeyDown={handleKeyDown}
       placeholder={placeholder}
       rows={1}
       className="w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder-zinc-300 dark:placeholder-zinc-600"
@@ -289,21 +295,15 @@ function BeatBadges({ fav }: { fav: Favorite }) {
         </span>
       )}
       {fav.bpm && (
-        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium dark:bg-zinc-700">
-          {fav.bpm}
-        </span>
+        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium dark:bg-zinc-700">{fav.bpm}</span>
       )}
       {fav.key && (
-        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium dark:bg-zinc-700">
-          {fav.key}
-        </span>
+        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium dark:bg-zinc-700">{fav.key}</span>
       )}
       {fav.inspiredBy.length > 0 && (
         <span className="text-xs text-zinc-500 dark:text-zinc-400">
           Inspired by{" "}
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">
-            {fav.inspiredBy.join(", ")}
-          </span>
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">{fav.inspiredBy.join(", ")}</span>
         </span>
       )}
     </div>
@@ -322,45 +322,46 @@ export default function NotesPage() {
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
   const [activeRecordIndex, setActiveRecordIndex] = useState<number | null>(null);
 
+  // Ref so the recorder callback always reads the current index, never stale
+  const activeRecordIndexRef = useRef<number | null>(null);
+  // Ref so save timeout always reads latest blocks, never stale
+  const blocksRef = useRef<Block[]>(blocks);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep blocksRef in sync
+  useEffect(() => { blocksRef.current = blocks; }, [blocks]);
 
   // ── Load ──────────────────────────────────────────────────
 
   useEffect(() => {
     fetch(`/api/notes/${videoId}`)
       .then((r) => {
-        if (r.status === 401) { router.replace("/?tab=favorites"); return null; }
-        if (r.status === 404) { router.replace("/?tab=favorites"); return null; }
+        if (r.status === 401 || r.status === 404) { router.replace("/?tab=favorites"); return null; }
         return r.json();
       })
       .then((data) => {
         if (!data) return;
         setFavorite(data.favorite);
-        if (data.note?.blocks?.length) {
-          setBlocks(data.note.blocks as Block[]);
-        }
+        if (data.note?.blocks?.length) setBlocks(data.note.blocks as Block[]);
       })
       .finally(() => setLoading(false));
   }, [videoId, router]);
 
-  // ── Auto-save ─────────────────────────────────────────────
+  // ── Save ──────────────────────────────────────────────────
 
-  const save = useCallback(
-    async (blocksToSave: Block[]) => {
-      setSaveStatus("saving");
-      try {
-        await fetch(`/api/notes/${videoId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ blocks: blocksToSave }),
-        });
-        setSaveStatus("saved");
-      } catch {
-        setSaveStatus("unsaved");
-      }
-    },
-    [videoId]
-  );
+  const save = useCallback(async (blocksToSave: Block[]) => {
+    setSaveStatus("saving");
+    try {
+      await fetch(`/api/notes/${videoId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocks: blocksToSave }),
+      });
+      setSaveStatus("saved");
+    } catch {
+      setSaveStatus("unsaved");
+    }
+  }, [videoId]);
 
   function scheduleSave(updated: Block[]) {
     setSaveStatus("unsaved");
@@ -371,52 +372,70 @@ export default function NotesPage() {
   // ── Block ops ─────────────────────────────────────────────
 
   function updateTextBlock(id: string, content: string) {
-    const updated = blocks.map((b) =>
-      b.id === id && b.type === "text" ? { ...b, content } : b
-    );
-    setBlocks(updated);
-    scheduleSave(updated);
+    setBlocks((prev) => {
+      const updated = prev.map((b) => b.id === id && b.type === "text" ? { ...b, content } : b);
+      scheduleSave(updated);
+      return updated;
+    });
   }
 
   function deleteBlock(id: string) {
-    const updated = blocks.filter((b) => b.id !== id);
-    const final =
-      updated.length === 0
+    setBlocks((prev) => {
+      const updated = prev.filter((b) => b.id !== id);
+      const final = updated.length === 0
         ? [{ id: nanoid(), type: "text" as const, content: "" }]
         : updated;
-    setBlocks(final);
-    scheduleSave(final);
+      scheduleSave(final);
+      return final;
+    });
+  }
+
+  // Uses functional setBlocks so it always operates on current state,
+  // not whatever `blocks` was when the recording started.
+  function insertTextBlock(atIndex: number) {
+    setBlocks((prev) => {
+      const updated = [
+        ...prev.slice(0, atIndex),
+        { id: nanoid(), type: "text" as const, content: "" },
+        ...prev.slice(atIndex),
+      ];
+      scheduleSave(updated);
+      return updated;
+    });
   }
 
   function insertVoiceBlock(atIndex: number, audioBase64: string, mimeType: string, duration: number) {
     const voiceBlock: VoiceBlock = {
-      id: nanoid(),
-      type: "voice",
-      audioBase64,
-      mimeType,
-      duration,
+      id: nanoid(), type: "voice", audioBase64, mimeType, duration,
       createdAt: new Date().toISOString(),
     };
-    const updated = [
-      ...blocks.slice(0, atIndex),
-      voiceBlock,
-      { id: nanoid(), type: "text" as const, content: "" },
-      ...blocks.slice(atIndex),
-    ];
-    setBlocks(updated);
-    scheduleSave(updated);
+    setBlocks((prev) => {
+      const updated = [
+        ...prev.slice(0, atIndex),
+        voiceBlock,
+        { id: nanoid(), type: "text" as const, content: "" },
+        ...prev.slice(atIndex),
+      ];
+      // blocksRef will be updated by the useEffect above before the timeout fires
+      scheduleSave(updated);
+      return updated;
+    });
     setActiveRecordIndex(null);
+    activeRecordIndexRef.current = null;
   }
 
   // ── Recorder ─────────────────────────────────────────────
+  // Reads activeRecordIndexRef — always the current index, never stale.
 
   const recorder = useRecorder((base64, mimeType, duration) => {
-    if (activeRecordIndex !== null) {
-      insertVoiceBlock(activeRecordIndex, base64, mimeType, duration);
+    const idx = activeRecordIndexRef.current;
+    if (idx !== null) {
+      insertVoiceBlock(idx, base64, mimeType, duration);
     }
   });
 
   function handleStartRecord(index: number) {
+    activeRecordIndexRef.current = index; // set ref first, synchronously
     setActiveRecordIndex(index);
     recorder.start();
   }
@@ -446,27 +465,18 @@ export default function NotesPage() {
               <path d="M19 12H5M12 5l-7 7 7 7" />
             </svg>
           </button>
-
-          <img
-            src={favorite.thumbnail}
-            alt=""
-            className="flex-shrink-0 h-12 w-20 rounded-md object-cover"
-          />
-
+          <img src={favorite.thumbnail} alt="" className="flex-shrink-0 h-12 w-20 rounded-md object-cover" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold leading-tight truncate">{favorite.title}</p>
             <BeatBadges fav={favorite} />
           </div>
-
-          <div className="flex-shrink-0 flex items-center gap-2">
-            <span className={`text-[10px] transition-colors ${
-              saveStatus === "saving" ? "text-zinc-400" :
-              saveStatus === "unsaved" ? "text-amber-500" :
-              "text-zinc-300 dark:text-zinc-600"
-            }`}>
-              {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
-            </span>
-          </div>
+          <span className={`flex-shrink-0 text-[10px] transition-colors ${
+            saveStatus === "saving" ? "text-zinc-400" :
+            saveStatus === "unsaved" ? "text-amber-500" :
+            "text-zinc-300 dark:text-zinc-600"
+          }`}>
+            {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
+          </span>
         </div>
       </div>
 
@@ -474,18 +484,20 @@ export default function NotesPage() {
       <div className="mx-auto max-w-2xl px-4 py-8 space-y-1">
         {blocks.map((block, i) => (
           <div key={block.id}>
-            <InsertVoiceButton
+            <InsertBar
               index={i}
               recording={recorder.recording}
               elapsed={recorder.elapsed}
               activeIndex={activeRecordIndex}
               onStartRecord={handleStartRecord}
               onStopRecord={recorder.stop}
+              onInsertSection={insertTextBlock}
             />
             {block.type === "text" ? (
               <AutoTextarea
                 value={block.content}
                 onChange={(v) => updateTextBlock(block.id, v)}
+                onDelete={blocks.length > 1 ? () => deleteBlock(block.id) : undefined}
                 placeholder={i === 0 ? "Write your lyrics here…" : "Continue writing…"}
               />
             ) : (
@@ -493,13 +505,14 @@ export default function NotesPage() {
             )}
           </div>
         ))}
-        <InsertVoiceButton
+        <InsertBar
           index={blocks.length}
           recording={recorder.recording}
           elapsed={recorder.elapsed}
           activeIndex={activeRecordIndex}
           onStartRecord={handleStartRecord}
           onStopRecord={recorder.stop}
+          onInsertSection={insertTextBlock}
         />
       </div>
     </div>
