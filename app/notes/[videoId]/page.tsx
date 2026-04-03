@@ -182,7 +182,8 @@ function VoicePlayer({
         onEnded={() => { setPlaying(false); setWithBeat(false); setProgress(0); }}
         onTimeUpdate={(e) => {
           const a = e.currentTarget;
-          if (a.duration) setProgress(a.currentTime / a.duration);
+          const dur = isFinite(a.duration) && a.duration > 0 ? a.duration : block.duration;
+          if (dur) setProgress(a.currentTime / dur);
         }}
       />
       <div className="flex items-center gap-3">
@@ -1085,6 +1086,8 @@ export default function NotesPage() {
           onStartRecordWithBeat={handleStartRecordWithBeat}
           getCurrentBeatTime={() => beatPlayerRef.current?.getCurrentTime() ?? 0}
           getBeatDuration={() => beatPlayerRef.current?.getDuration() ?? 0}
+          onPreviewBeat={(t) => beatPlayerRef.current?.loadAndPlayFrom(t)}
+          onPauseBeat={() => beatPlayerRef.current?.pause()}
         />
       </div>
     </div>

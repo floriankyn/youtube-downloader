@@ -3,7 +3,7 @@ FROM node:22-slim AS base
 # Stage 1: Install dependencies
 FROM base AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY package.json ./
 COPY prisma ./prisma
 RUN npm install
 RUN npx prisma generate
