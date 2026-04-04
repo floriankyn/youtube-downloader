@@ -40,30 +40,31 @@ A music production web app. Users search YouTube for beats, preview and download
 ## Project structure
 
 ```
-app/
-  page.tsx              # Main page — four tabs: Paste URL, Search YouTube, Favorites, Songs
-  layout.tsx            # App title "Music Craftbook", global metadata
-  globals.css
-  api/
-    auth/               # login, logout, signup, me
-      google/route.ts       # Google OAuth — redirects to Google consent screen
-      google/callback/route.ts  # Google OAuth callback — exchanges code, creates session
-    search/route.ts     # YouTube search via yt-dlp (requires auth)
-    analyze/route.ts    # Single-video metadata extraction
-    download/route.ts   # Stream download (MP4 / MP3 / WAV)
-    preview/route.ts    # Audio preview stream
-    favorites/route.ts  # GET / POST / PATCH / DELETE favorites
-    notes/[videoId]/route.ts  # GET + PUT note blocks (includes song metadata)
-    songs/route.ts      # GET notes with songName set (no proxy — uses getSession)
-    view/[publicId]/route.ts  # Public note view (no auth)
-    user/route.ts             # DELETE — delete account (GDPR Art. 17, cascade)
-    user/email/route.ts       # PATCH — change email
-    user/password/route.ts    # PATCH — change or set password
-    user/export/route.ts      # GET — export all user data as JSON (GDPR Art. 20)
-  notes/[videoId]/page.tsx    # Full lyrics/notes editor
-  view/[publicId]/page.tsx    # Read-only public share page
-  settings/page.tsx           # Account settings (email, password, export, delete)
-proxy.ts                # Auth middleware — protects /api/search, /api/favorites, /api/notes, /api/user
+src/
+  app/
+    page.tsx              # Main page — four tabs: Paste URL, Search YouTube, Favorites, Songs
+    layout.tsx            # App title "Music Craftbook", global metadata
+    globals.css
+    api/
+      auth/               # login, logout, signup, me
+        google/route.ts       # Google OAuth — redirects to Google consent screen
+        google/callback/route.ts  # Google OAuth callback — exchanges code, creates session
+      search/route.ts     # YouTube search via yt-dlp (requires auth)
+      analyze/route.ts    # Single-video metadata extraction
+      download/route.ts   # Stream download (MP4 / MP3 / WAV)
+      preview/route.ts    # Audio preview stream
+      favorites/route.ts  # GET / POST / PATCH / DELETE favorites
+      notes/[videoId]/route.ts  # GET + PUT note blocks (includes song metadata)
+      songs/route.ts      # GET notes with songName set (no proxy — uses getSession)
+      view/[publicId]/route.ts  # Public note view (no auth)
+      user/route.ts             # DELETE — delete account (GDPR Art. 17, cascade)
+      user/email/route.ts       # PATCH — change email
+      user/password/route.ts    # PATCH — change or set password
+      user/export/route.ts      # GET — export all user data as JSON (GDPR Art. 20)
+    notes/[videoId]/page.tsx    # Full lyrics/notes editor
+    view/[publicId]/page.tsx    # Read-only public share page
+    settings/page.tsx           # Account settings (email, password, export, delete)
+  proxy.ts                # Auth middleware — protects /api/search, /api/favorites, /api/notes, /api/user
 prisma/
   schema.prisma         # User, Favorite, Note models
   migrations/           # 7 migrations (init → … → note_song_metadata → google_auth)
