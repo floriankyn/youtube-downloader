@@ -34,7 +34,7 @@ function scheduleSave(editToken: string) {
         where: { userId_videoId: { userId: room.ownerUserId, videoId: room.videoId } },
         data: { blocks: room.blocks as never, timecodes: room.timecodes as never },
       });
-    } catch { /* note may have been deleted */ }
+    } catch (err) { console.error("[collab] save error:", err); }
     room.saveTimer = null;
   }, 800);
 }
@@ -61,25 +61,37 @@ app.prepare().then(() => {
   });
 
   const io = new Server(httpServer, {
-    cors: { origin: false },
+    cors: {
+      origin: process.env.APP_URL || "http://localhost:3000",
+      credentials: true,
+    },
     path: "/socket.io",
   });
 
   // ── Auth middleware ─────────────────────────────────────────
   io.use(async (socket, next) => {
     const cookieHeader = socket.handshake.headers.cookie || "";
+    console.log("[collab] handshake cookie header:", cookieHeader ? cookieHeader.substring(0, 120) : "(empty)");
     const cookies = parseCookies(cookieHeader);
+    console.log("[collab] parsed cookie keys:", Object.keys(cookies));
     const session = await decrypt(cookies["session"]);
-    if (!session?.userId) return next(new Error("Unauthorized"));
+    if (!session?.userId) {
+      console.log("[collab] auth failed — no valid session cookie");
+      return next(new Error("Unauthorized"));
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: session.userId },
       select: { id: true, email: true },
     });
-    if (!user) return next(new Error("Unauthorized"));
+    if (!user) {
+      console.log("[collab] auth failed — user not found:", session.userId);
+      return next(new Error("Unauthorized"));
+    }
 
     socket.data.userId = user.id;
     socket.data.email = user.email;
+    console.log(`[collab] socket authenticated: ${user.email} (${socket.id})`);
     next();
   });
 
@@ -88,13 +100,25 @@ app.prepare().then(() => {
     let currentRoom: string | null = null;
 
     socket.on("join-room", async (editToken: string) => {
-      if (typeof editToken !== "string" || editToken.length > 200) return;
+      if (typeof editToken !== "string" || editToken.length > 200) {
+        console.log("[collab] join-room rejected — invalid token format");
+        return;
+      }
 
-      const note = await prisma.note.findUnique({
-        where: { editToken },
-        select: { userId: true, videoId: true, blocks: true, timecodes: true },
-      });
+      let note;
+      try {
+        note = await prisma.note.findUnique({
+          where: { editToken },
+          select: { userId: true, videoId: true, blocks: true, timecodes: true },
+        });
+      } catch (err) {
+        console.error("[collab] DB error in join-room:", err);
+        socket.emit("error", { message: "Server error" });
+        return;
+      }
+
       if (!note) {
+        console.log(`[collab] join-room failed — token not found: ${editToken.slice(0, 8)}…`);
         socket.emit("error", { message: "Invalid collaboration token" });
         return;
       }
@@ -110,6 +134,7 @@ app.prepare().then(() => {
           timecodes: note.timecodes ?? [],
           saveTimer: null,
         });
+        console.log(`[collab] room created: ${editToken.slice(0, 8)}… videoId=${note.videoId}`);
       }
 
       const room = rooms.get(editToken)!;
@@ -117,6 +142,8 @@ app.prepare().then(() => {
       const peers = socketsInRoom
         .filter((s) => s.id !== socket.id)
         .map((s) => ({ id: s.id, email: s.data.email as string }));
+
+      console.log(`[collab] ${socket.data.email} joined room ${editToken.slice(0, 8)}… peers=${peers.length}`);
 
       socket.emit("room-state", {
         blocks: room.blocks,
@@ -131,7 +158,10 @@ app.prepare().then(() => {
     });
 
     socket.on("blocks-update", (blocks: unknown) => {
-      if (!currentRoom) return;
+      if (!currentRoom) {
+        console.log(`[collab] blocks-update from ${socket.id} but not in a room yet — dropped`);
+        return;
+      }
       const room = rooms.get(currentRoom);
       if (!room) return;
       room.blocks = blocks;
@@ -149,6 +179,7 @@ app.prepare().then(() => {
     });
 
     socket.on("disconnect", () => {
+      console.log(`[collab] ${socket.data.email ?? socket.id} disconnected`);
       if (!currentRoom) return;
       socket.to(currentRoom).emit("peer-left", { id: socket.id });
 
@@ -159,6 +190,7 @@ app.prepare().then(() => {
           const room = rooms.get(currentRoom!);
           if (room?.saveTimer) clearTimeout(room.saveTimer);
           rooms.delete(currentRoom!);
+          console.log(`[collab] room ${currentRoom!.slice(0, 8)}… cleaned up`);
         }
       }, 5000);
     });

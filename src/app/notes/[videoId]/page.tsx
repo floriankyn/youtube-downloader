@@ -1144,7 +1144,9 @@ export default function NotesPage() {
         setFavorite(data.favorite);
         if (data.note?.blocks?.length) setBlocks(data.note.blocks as Block[]);
         if (data.note?.timecodes?.length) setTimecodes(data.note.timecodes as Timecode[]);
-        // In collaborator mode, set the editToken so Socket.io connects
+        // Restore editToken for owner (so Socket.io auto-joins the room they already shared)
+        // and set it for collaborators (so Socket.io connects using their invite token)
+        if (!isCollaborator && data.note?.editToken) setEditToken(data.note.editToken);
         if (isCollaborator && collabToken) setEditToken(collabToken);
 
         // Song / beat metadata — note values take priority, fall back to favorite
@@ -1199,7 +1201,7 @@ export default function NotesPage() {
     } catch {
       setSaveStatus("unsaved");
     }
-  }, [videoId]);
+  }, [videoId, isCollaborator]);
 
   function scheduleSave() {
     setSaveStatus("unsaved");
@@ -1212,11 +1214,15 @@ export default function NotesPage() {
   useEffect(() => {
     if (!activeToken) return;
 
-    const socket = io({ path: "/socket.io", transports: ["websocket", "polling"] });
+    const socket = io({ path: "/socket.io", transports: ["polling", "websocket"] });
     socketRef.current = socket;
 
     socket.on("connect", () => {
       socket.emit("join-room", activeToken);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("[collab] connection error:", err.message);
     });
 
     socket.on("room-state", ({ blocks: remoteBlocks, timecodes: remoteTcs, peers: remotePeers }: {
@@ -1373,40 +1379,35 @@ export default function NotesPage() {
   // ── Block ops ─────────────────────────────────────────────
 
   function updateTextBlock(id: string, content: string) {
-    setBlocks((prev) => {
-      const updated = prev.map((b) => b.id === id && b.type === "text" ? { ...b, content } : b);
-      blocksRef.current = updated;
-      emitBlocks(updated);
-      scheduleSave();
-      return updated;
-    });
+    const updated = blocksRef.current.map((b) => b.id === id && b.type === "text" ? { ...b, content } : b);
+    blocksRef.current = updated;
+    setBlocks(updated);
+    emitBlocks(updated);
+    scheduleSave();
   }
 
   function deleteBlock(id: string) {
-    setBlocks((prev) => {
-      const updated = prev.filter((b) => b.id !== id);
-      const final = updated.length === 0
-        ? [{ id: nanoid(), type: "text" as const, content: "" }]
-        : updated;
-      blocksRef.current = final;
-      emitBlocks(final);
-      scheduleSave();
-      return final;
-    });
+    const filtered = blocksRef.current.filter((b) => b.id !== id);
+    const updated = filtered.length === 0
+      ? [{ id: nanoid(), type: "text" as const, content: "" }]
+      : filtered;
+    blocksRef.current = updated;
+    setBlocks(updated);
+    emitBlocks(updated);
+    scheduleSave();
   }
 
   function insertTextBlock(atIndex: number) {
-    setBlocks((prev) => {
-      const updated = [
-        ...prev.slice(0, atIndex),
-        { id: nanoid(), type: "text" as const, content: "" },
-        ...prev.slice(atIndex),
-      ];
-      blocksRef.current = updated;
-      emitBlocks(updated);
-      scheduleSave();
-      return updated;
-    });
+    const current = blocksRef.current;
+    const updated = [
+      ...current.slice(0, atIndex),
+      { id: nanoid(), type: "text" as const, content: "" },
+      ...current.slice(atIndex),
+    ];
+    blocksRef.current = updated;
+    setBlocks(updated);
+    emitBlocks(updated);
+    scheduleSave();
   }
 
   function insertVoiceBlock(atIndex: number, audioBase64: string, mimeType: string, duration: number, beatTimecode: number | null, sectionTag: string | null) {
@@ -1414,18 +1415,17 @@ export default function NotesPage() {
       id: nanoid(), type: "voice", audioBase64, mimeType, duration,
       createdAt: new Date().toISOString(), beatTimecode, sectionTag,
     };
-    setBlocks((prev) => {
-      const updated = [
-        ...prev.slice(0, atIndex),
-        voiceBlock,
-        { id: nanoid(), type: "text" as const, content: "" },
-        ...prev.slice(atIndex),
-      ];
-      blocksRef.current = updated;
-      emitBlocks(updated);
-      scheduleSave();
-      return updated;
-    });
+    const current = blocksRef.current;
+    const updated = [
+      ...current.slice(0, atIndex),
+      voiceBlock,
+      { id: nanoid(), type: "text" as const, content: "" },
+      ...current.slice(atIndex),
+    ];
+    blocksRef.current = updated;
+    setBlocks(updated);
+    emitBlocks(updated);
+    scheduleSave();
     setActiveRecordIndex(null);
     activeRecordIndexRef.current = null;
   }
