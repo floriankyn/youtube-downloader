@@ -760,7 +760,7 @@ function DownloaderForm() {
   const [error, setError] = useState("");
 
   // Auth
-  const [user, setUser] = useState<{ id: string; email: string; createdAt: string; hasPassword: boolean } | null>(null);
+  const [user, setUser] = useState<{ id: string; email: string; createdAt: string; hasPassword: boolean; hasYoutubeKey: boolean } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
   // URL analysis
@@ -779,7 +779,7 @@ function DownloaderForm() {
   const [searching, setSearching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [searchPage, setSearchPage] = useState(1);
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [activeQuery, setActiveQuery] = useState<string | null>(null);
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
@@ -883,11 +883,16 @@ function DownloaderForm() {
   }, [url]);
 
   async function analyzeUrl(videoUrl: string) {
+    if (!user?.hasYoutubeKey) { setError("NO_API_KEY"); return; }
     setAnalyzing(true); setError("");
     try {
       const res = await fetch(`/api/analyze?${new URLSearchParams({ url: videoUrl })}`);
-      if (!res.ok) { const d = await res.json().catch(() => null); throw new Error(d?.error || "Analysis failed"); }
-      setAnalysis(await res.json());
+      const d = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (d?.code === "NO_API_KEY") { setError("NO_API_KEY"); return; }
+        throw new Error(d?.error || "Analysis failed");
+      }
+      setAnalysis(d);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
     } finally { setAnalyzing(false); }
@@ -923,15 +928,21 @@ function DownloaderForm() {
 
   async function runSearch(q: string, df: DateFilter | null = dateFilter) {
     if (!q) return;
-    stop(); setSearching(true); setError(""); setResults([]); setSearchPage(1); setHasMore(false);
+    stop(); setSearching(true); setError(""); setResults([]); setNextPageToken(null); setHasMore(false);
     try {
-      const params = new URLSearchParams({ q, page: "1" });
+      const params = new URLSearchParams({ q });
       if (df) params.set("dateFilter", df);
       const res = await fetch(`/api/search?${params}`);
-      if (!res.ok) { const d = await res.json().catch(() => null); throw new Error(d?.error || "Search failed"); }
-      const data = await res.json();
-      setResults(data.results || []);
-      setHasMore(data.hasMore ?? false);
+      const d = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (d?.code === "NO_API_KEY") { setError("NO_API_KEY"); return; }
+        if (d?.code === "QUOTA_EXCEEDED") { setError(d.error); return; }
+        if (d?.code === "INVALID_KEY") { setError(d.error); return; }
+        throw new Error(d?.error || "Search failed");
+      }
+      setResults(d.results || []);
+      setNextPageToken(d.nextPageToken ?? null);
+      setHasMore(!!d.nextPageToken);
       setActiveQuery(q);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Search failed");
@@ -955,18 +966,17 @@ function DownloaderForm() {
 
   async function handleLoadMore() {
     const q = activeQuery;
-    if (!q) return;
-    const nextPage = searchPage + 1;
+    if (!q || !nextPageToken) return;
     setLoadingMore(true);
     try {
-      const params = new URLSearchParams({ q, page: String(nextPage) });
+      const params = new URLSearchParams({ q, pageToken: nextPageToken });
       if (dateFilter) params.set("dateFilter", dateFilter);
       const res = await fetch(`/api/search?${params}`);
       if (!res.ok) { const d = await res.json().catch(() => null); throw new Error(d?.error || "Search failed"); }
       const data = await res.json();
       setResults((prev) => [...prev, ...(data.results || [])]);
-      setSearchPage(nextPage);
-      setHasMore(data.hasMore ?? false);
+      setNextPageToken(data.nextPageToken ?? null);
+      setHasMore(!!data.nextPageToken);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Search failed");
     } finally { setLoadingMore(false); }
@@ -1274,6 +1284,30 @@ function DownloaderForm() {
               </div>
             ) : !user ? (
               <AuthForm onSuccess={setUser} oauthError={searchParams.get("error") === "oauth_failed"} />
+            ) : !user.hasYoutubeKey ? (
+              <div className="flex flex-col items-center gap-4 py-16 text-center">
+                <div className="rounded-full bg-zinc-100 dark:bg-zinc-800 p-4">
+                  <svg viewBox="0 0 24 24" className="w-8 h-8 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-base mb-1">YouTube API key required</h3>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-xs">
+                    To search for beats, you need a YouTube Data API v3 key. It&apos;s free to set up and stays private in your account.
+                  </p>
+                </div>
+                <button
+                  onClick={() => router.push("/settings#youtube-key")}
+                  className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700 transition-colors"
+                >
+                  <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Set up API key in Settings
+                </button>
+              </div>
             ) : (
               <>
                 <SearchFilters
@@ -1843,9 +1877,21 @@ function DownloaderForm() {
         )}
 
         {error && (
-          <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950 dark:text-red-400">
-            {error}
-          </p>
+          error === "NO_API_KEY" ? (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-sm text-amber-800 dark:text-amber-300">A YouTube API key is required to use this feature.</p>
+              <button
+                onClick={() => router.push("/settings#youtube-key")}
+                className="flex-shrink-0 text-xs font-semibold text-amber-800 dark:text-amber-300 underline hover:no-underline"
+              >
+                Set up in Settings
+              </button>
+            </div>
+          ) : (
+            <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950 dark:text-red-400">
+              {error}
+            </p>
+          )
         )}
       </div>
     </div>

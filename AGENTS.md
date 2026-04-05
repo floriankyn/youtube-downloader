@@ -50,8 +50,8 @@ src/
       auth/               # login, logout, signup, me
         google/route.ts       # Google OAuth — redirects to Google consent screen
         google/callback/route.ts  # Google OAuth callback — exchanges code, creates session
-      search/route.ts     # YouTube search via yt-dlp — accepts page param, returns hasMore
-      analyze/route.ts    # Single-video metadata extraction
+      search/route.ts     # YouTube search via YouTube Data API v3 — accepts pageToken, returns nextPageToken
+      analyze/route.ts    # Single-video metadata extraction via YouTube Data API v3
       download/route.ts   # Stream download (MP4 / MP3 / WAV)
       preview/route.ts    # Audio preview stream
       favorites/route.ts  # GET / POST / PATCH / DELETE favorites
@@ -66,22 +66,23 @@ src/
       user/route.ts             # DELETE — delete account (GDPR Art. 17, cascade)
       user/email/route.ts       # PATCH — change email
       user/password/route.ts    # PATCH — change or set password
+      user/youtube-key/route.ts # PATCH — save/clear YouTube Data API key
       user/export/route.ts      # GET — export all user data as JSON (GDPR Art. 20)
     notes/[videoId]/page.tsx    # Full lyrics/notes editor (+ real-time collab via Socket.io)
     view/[publicId]/page.tsx    # Read-only public share page
     settings/page.tsx           # Account settings (email, password, export, delete)
-  proxy.ts                # Auth middleware — protects /api/search, /api/favorites, /api/notes, /api/user, /api/collab, /api/songs, /api/tags, /api/banned
+  proxy.ts                # Auth middleware — protects /api/search, /api/favorites, /api/notes, /api/user, /api/collab, /api/songs, /api/tags, /api/banned, /api/analyze
 server.ts               # Custom HTTP server: wraps Next.js + mounts Socket.io on the same port
 prisma/
   schema.prisma         # User, Favorite, Note, SearchTag, BannedVideo, CachedVideo models
-  migrations/           # 12 migrations (init → … → google_auth → collab_token → note_folder → search_tags → banned_videos → cached_videos)
+  migrations/           # 13 migrations (init → … → search_tags → banned_videos → cached_videos → user_youtube_api_key)
 ```
 
 ---
 
 ## Data models
 
-**User** — `id`, `email`, `passwordHash?` (null for Google-only accounts), `googleId?` (unique), `createdAt`
+**User** — `id`, `email`, `passwordHash?` (null for Google-only accounts), `googleId?` (unique), `youtubeApiKey?`, `createdAt`
 
 **Favorite** — `userId`, `videoId`, `title`, `thumbnail`, `duration`, `durationSec`, `url`, `bpm?`, `key?`, `beatType?`, `inspiredBy[]`, `tags[]`, `dateFilter?`, `freeFilter`, `artistFilter?`, `typeBeat` — plus unique `[userId, videoId]`
 
@@ -171,10 +172,21 @@ Uses `block.duration` as fallback denominator when `audio.duration` is not yet l
 - `DELETE /api/songs/folder` — deletes a folder (sets `folder = null` on all songs in it, notes kept).
 - UI: songs grouped by folder (collapsible, amber folder icon) then "Unfiled". Folder header has inline rename and delete. Per-song "Add to folder" / "Move folder" opens a picker panel with existing folders + create-new input.
 
+### YouTube Data API v3
+- Search and analyze use the **YouTube Data API v3** (not yt-dlp). Each user stores their own `youtubeApiKey` in the DB (`User.youtubeApiKey`).
+- `GET /api/auth/me` returns `hasYoutubeKey: boolean` — never exposes the key itself.
+- `PATCH /api/user/youtube-key` — saves or clears (`""` → `null`) the key for the session user.
+- If no key: routes return `{ error: "...", code: "NO_API_KEY" }` (HTTP 403). Frontend shows an amber CTA banner or a full-tab gate with a button to `/settings#youtube-key`.
+- Error codes from YouTube API: `QUOTA_EXCEEDED` (HTTP 429), `INVALID_KEY` (HTTP 403) — displayed as plain error messages.
+- `src/app/lib/youtube.ts` — shared helpers: `YT_API_BASE`, `parseIsoDuration`, `formatYtDuration`, `toUploadDate`, `parseYouTubeError`.
+- Search flow: `search.list` (videoIds + thumbnails) + `videos.list` (duration, statistics, full snippet). Pagination uses YouTube's `nextPageToken` cursor (not offset-based pages).
+- **Download/preview routes remain unchanged** — still use yt-dlp + ffmpeg. Only search and analyze moved to the YouTube API.
+- Settings page (`/settings#youtube-key`) — masked password input, "Key saved" badge, Remove button, link to Google Cloud Console.
+
 ### Search — tags, history, pagination, metadata, blocked videos
 - **Tags**: `SearchTag` model stores per-user keyword tags in DB. `GET/POST/PATCH/DELETE /api/tags`. Tags appear as filter pills in a dedicated "Tags" row. Clicking toggles them active (appended to the yt-dlp query). Hover reveals inline rename (pencil) and delete (✕). `+ New tag` dashed pill reveals an inline input; hidden by default.
 - **History**: last 15 searches stored in `localStorage["search-history"]` as `SearchHistoryEntry[]` (rawInput, builtQuery, all filter state, timestamp). Shown below the search bar when idle. The currently active query is marked with a checkmark. Clicking an entry restores all filters.
-- **Pagination**: `GET /api/search?q=…&page=N`. API fetches `ytsearch{N*15}` and returns the slice `[(N-1)*15:]` plus a `hasMore` boolean. Max 4 pages (60 results). Client appends results and shows a "Load more" button; when exhausted shows total count.
+- **Pagination**: `GET /api/search?q=…&pageToken=…` — cursor-based via YouTube API `nextPageToken`. Returns `{ results, nextPageToken, hasMore }`. Client stores `nextPageToken` state and sends it on "Load more". No artificial page cap — YouTube drives availability.
 - **Search summary bar**: shows above results — result count (e.g. `"15+ beats"` while paginating, `"42 beats"` when done), spinning indicator while loading more, active query in italic, and color-coded filter badges for any active filters.
 - **Video metadata on cards**: each result card shows uploader/channel, view count (formatted as `1.2M` / `450K`), upload date (e.g. `Mar 2024`), and a "Watch on YouTube" link. Extracted from yt-dlp JSON fields `view_count`, `uploader`/`channel`, `upload_date`.
 - **Video cache**: every search result is upserted into `CachedVideo` (global, no user link) fire-and-forget after the response is sent. Stores `videoId`, `title`, `thumbnail`, `duration`, `durationSec`, `url`, `viewCount`, `uploader`, `uploadDate`, `updatedAt`. Allows persistent reference to any seen video regardless of yt-dlp availability.

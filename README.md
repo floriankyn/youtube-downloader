@@ -74,9 +74,10 @@ Find beat → Save → Write → Record → Sync → Share
 ### 🎵 Beat Search & Download
 
 - Search YouTube with smart filters (type beats, artists, recency)
+- **YouTube Data API v3** — fast, reliable search powered by your own API key (free tier, set up in Settings)
 - **Custom search tags** — build a personal library of keyword tags, toggle them on/off per search, rename or delete anytime (saved to your account)
 - **Search history** — last 15 searches remembered, restore any with one click
-- **Pagination** — browse up to 60 results across 4 pages with "Load more"
+- **Pagination** — browse more results with "Load more" (cursor-based, no artificial cap)
 - **Search summary** — result count, active query, and filter badges above every result list
 - **Video metadata** — each card shows uploader, view count, and upload date; one-click "Watch on YouTube"
 - **Block videos** — "Never show again" on any result hides it permanently; manage blocked videos in a dedicated tab
@@ -170,6 +171,7 @@ Capture ideas exactly where they belong in the beat.
 
 ### ⚙️ Account Settings
 
+- **YouTube API key** — store your own YouTube Data API v3 key; required to search and analyze beats
 - Change email address
 - Change or set a password
 - **Export all your data** as JSON (GDPR Art. 20)

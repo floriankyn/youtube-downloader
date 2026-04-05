@@ -9,6 +9,7 @@ interface User {
   email: string;
   createdAt: string;
   hasPassword: boolean;
+  hasYoutubeKey: boolean;
 }
 
 // ─── Section wrapper ──────────────────────────────────────────
@@ -137,6 +138,108 @@ function ChangePasswordForm({ hasPassword }: { hasPassword: boolean }) {
         {loading ? "Saving…" : hasPassword ? "Update password" : "Set password"}
       </button>
     </form>
+  );
+}
+
+// ─── YouTube API Key ──────────────────────────────────────────
+
+function YouTubeKeyForm({ hasKey, onUpdate }: { hasKey: boolean; onUpdate: (has: boolean) => void }) {
+  const [apiKey, setApiKey] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [feedback, setFeedback] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!apiKey.trim()) return;
+    setFeedback(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/user/youtube-key", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: apiKey.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setFeedback({ msg: "API key saved.", type: "success" });
+      setApiKey("");
+      onUpdate(true);
+    } catch (e) {
+      setFeedback({ msg: e instanceof Error ? e.message : "Something went wrong", type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRemove() {
+    setFeedback(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/user/youtube-key", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: "" }),
+      });
+      if (!res.ok) throw new Error("Failed to remove key");
+      setFeedback({ msg: "API key removed.", type: "success" });
+      onUpdate(false);
+    } catch (e) {
+      setFeedback({ msg: e instanceof Error ? e.message : "Something went wrong", type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        Required to search YouTube and analyze beats. Your key is stored securely and never shared.{" "}
+        <a
+          href="https://console.cloud.google.com/apis/credentials"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-500 hover:underline"
+        >
+          Get a key from Google Cloud Console
+        </a>{" "}
+        — enable the <strong>YouTube Data API v3</strong> and create an API key.
+      </p>
+      {hasKey && (
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-3 py-1 text-xs font-medium text-green-700 dark:bg-green-950/40 dark:border-green-800 dark:text-green-400">
+            <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            Key saved
+          </span>
+          <button
+            type="button"
+            onClick={handleRemove}
+            disabled={loading}
+            className="text-xs text-zinc-400 hover:text-red-500 transition-colors disabled:opacity-50"
+          >
+            Remove
+          </button>
+        </div>
+      )}
+      <form onSubmit={handleSave} className="flex gap-2">
+        <Input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={hasKey ? "Enter new key to replace…" : "AIza…"}
+          autoComplete="off"
+        />
+        <button
+          type="submit"
+          disabled={loading || !apiKey.trim()}
+          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+        >
+          {loading ? "Saving…" : hasKey ? "Replace key" : "Save key"}
+        </button>
+      </form>
+      {feedback && <Toast message={feedback.msg} type={feedback.type} />}
+    </div>
   );
 }
 
@@ -288,6 +391,16 @@ export default function SettingsPage() {
           )}
           <ChangePasswordForm hasPassword={user.hasPassword} />
         </Section>
+
+        {/* YouTube API key */}
+        <div id="youtube-key">
+          <Section title="YouTube API key">
+            <YouTubeKeyForm
+              hasKey={user.hasYoutubeKey}
+              onUpdate={(has) => setUser((u) => u ? { ...u, hasYoutubeKey: has } : u)}
+            />
+          </Section>
+        </div>
 
         {/* Data & Privacy */}
         <Section title="Data & privacy">

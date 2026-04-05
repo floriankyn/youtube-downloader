@@ -8,7 +8,7 @@ export async function GET() {
   }
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
-    select: { id: true, email: true, createdAt: true, passwordHash: true },
+    select: { id: true, email: true, createdAt: true, passwordHash: true, youtubeApiKey: true },
   });
   if (!user) return Response.json({ user: null });
   return Response.json({
@@ -17,6 +17,7 @@ export async function GET() {
       email: user.email,
       createdAt: user.createdAt,
       hasPassword: !!user.passwordHash,
+      hasYoutubeKey: !!user.youtubeApiKey,
     },
   });
 }
