@@ -153,11 +153,12 @@ Capture ideas exactly where they belong in the beat.
 
 ---
 
-### 🎧 Audio Device Control
+### 🎧 Audio Device Control & Recording Quality
 
-- Select microphone input
+- Select microphone input — enforced with `exact` device constraint, falls back gracefully if unavailable
 - Route output to speakers / headphones
-- Works directly in-browser
+- Recording disables browser voice-call processing (echo cancellation, noise suppression, auto gain) that degrades music recording quality
+- 48 kHz sample rate, stereo capture, 128 kbps Opus encoding
 
 ---
 

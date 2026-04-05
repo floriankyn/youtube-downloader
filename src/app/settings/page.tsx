@@ -193,14 +193,16 @@ function YouTubeKeyForm({ hasKey, onUpdate }: { hasKey: boolean; onUpdate: (has:
   return (
     <div className="space-y-3">
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        Required to search YouTube and analyze beats. Your key is stored securely and never shared.{" "}
+        Optional — without a key, search and analyze use yt-dlp (slower, may be less reliable).
+        With a key, they use the YouTube Data API v3 for faster and more accurate results.
+        Your key is stored securely and never shared.{" "}
         <a
           href="https://console.cloud.google.com/apis/credentials"
           target="_blank"
           rel="noopener noreferrer"
           className="text-red-500 hover:underline"
         >
-          Get a key from Google Cloud Console
+          Get a free key from Google Cloud Console
         </a>{" "}
         — enable the <strong>YouTube Data API v3</strong> and create an API key.
       </p>

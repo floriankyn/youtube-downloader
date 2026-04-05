@@ -77,7 +77,13 @@ function nanoid() {
 }
 
 function getSupportedMimeType(): string {
-  const types = ["audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  // Prefer explicit Opus codec for consistent quality across browsers
+  const types = [
+    "audio/webm;codecs=opus",
+    "audio/ogg;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+  ];
   return types.find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
 }
 
@@ -129,11 +135,51 @@ function useRecorder(
 
   const start = useCallback(async () => {
     const deviceId = inputDeviceIdRef.current;
-    const audioConstraint = deviceId ? { deviceId: { ideal: deviceId } } : true;
+
+    // Always disable browser voice-call processing — it wrecks audio quality
+    // when recording over music (AGC ducks the signal, NR kills frequencies).
+    const baseAudioConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      sampleRate: 48000,
+      channelCount: 2, // prevent mono-left playback; browser upmixes if mic is mono
+    };
+
+    // Try the selected device with `exact` (hard enforcement) first.
+    // Fall back to `ideal` (soft hint) if the device is unavailable,
+    // then fall back to system default if both fail.
+    let stream: MediaStream | null = null;
+    if (deviceId) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { ...baseAudioConstraints, deviceId: { exact: deviceId } },
+        });
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { ...baseAudioConstraints, deviceId: { ideal: deviceId } },
+          });
+        } catch {
+          // fall through to default below
+        }
+      }
+    }
+    if (!stream) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: baseAudioConstraints });
+      } catch {
+        alert("Microphone access denied.");
+        return;
+      }
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
       const mimeType = getSupportedMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(
+        stream,
+        { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 128000 }
+      );
       chunksRef.current = [];
       startTimeRef.current = Date.now();
 
@@ -157,7 +203,7 @@ function useRecorder(
         setElapsed((Date.now() - startTimeRef.current) / 1000);
       }, 100);
     } catch {
-      alert("Microphone access denied.");
+      stream.getTracks().forEach((t) => t.stop());
     }
   }, []); // stable — no deps needed thanks to ref
 

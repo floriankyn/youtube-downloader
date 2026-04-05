@@ -156,11 +156,14 @@ Exposes `BeatPlayerHandle`: `{ getCurrentTime, getDuration, pause, loadAndPlayFr
 - `beatTimecode` stored on the block = actual beat start time (after applying lead-in)
 - Playback: "▶" = voice only, "▶ + beat" = both in sync from `beatTimecode`
 
-### Audio device selection
+### Audio device selection & recording quality
 - Mic icon in notes header opens a device panel
 - Enumerates devices after a brief `getUserMedia` call (required for labels)
-- `inputDeviceId` passed to `useRecorder` via ref — uses `{ deviceId: { ideal: id } }` constraint
+- `inputDeviceId` selection uses a three-tier fallback: `{ exact: id }` → `{ ideal: id }` → system default
 - `outputDeviceId` applied via `setSinkId()` on `<audio>` elements in `VoicePlayer` and `BeatPlayer`
+- All recordings disable browser voice-call processing (`echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false`) — these destroy quality when recording over music
+- `sampleRate: 48000`, `channelCount: 2` (prevents mono-left playback; browser upmixes mono mics)
+- `MediaRecorder` uses `audioBitsPerSecond: 128000` and prefers `audio/webm;codecs=opus`
 
 ### Voice note progress bar
 Uses `block.duration` as fallback denominator when `audio.duration` is not yet loaded (`isFinite(a.duration) && a.duration > 0 ? a.duration : block.duration`).
@@ -176,7 +179,7 @@ Uses `block.duration` as fallback denominator when `audio.duration` is not yet l
 - Search and analyze use the **YouTube Data API v3** (not yt-dlp). Each user stores their own `youtubeApiKey` in the DB (`User.youtubeApiKey`).
 - `GET /api/auth/me` returns `hasYoutubeKey: boolean` — never exposes the key itself. The user shape used throughout the app (page.tsx state, AuthForm onSuccess) includes this field.
 - `PATCH /api/user/youtube-key` — saves or clears (`""` → `null`) the key for the session user.
-- If no key: routes return `{ error: "...", code: "NO_API_KEY" }` (HTTP 403). Frontend shows an amber CTA banner or a full-tab gate with a button to `/settings#youtube-key`.
+- If no key: both routes fall back to yt-dlp automatically (same response shape). Frontend shows a subtle inline hint pointing to Settings — search is never blocked.
 - Error codes from YouTube API: `QUOTA_EXCEEDED` (HTTP 429), `INVALID_KEY` (HTTP 403) — displayed as plain error messages.
 - `src/app/lib/youtube.ts` — shared helpers: `YT_API_BASE`, `parseIsoDuration`, `formatYtDuration`, `toUploadDate`, `parseYouTubeError`.
 - Search flow: `search.list` (videoIds + thumbnails) + `videos.list` (duration, statistics, full snippet). Pagination uses YouTube's `nextPageToken` cursor (not offset-based pages).
